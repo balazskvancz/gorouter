@@ -10,7 +10,7 @@ var (
 
 // removeQueryParts removes the query strings from
 // the given url, if there is any.
-func removeQueryParts(url string) string {
+func removeQueryPart(url string) string {
 	idx := strings.IndexRune(url, query)
 	if idx > 0 {
 		return url[:idx]
@@ -24,7 +24,15 @@ type route struct {
 	chain []HandlerFunc
 }
 
-func newroute(url string, fn HandlerFunc) *route {
+type Route interface {
+	RegisterMiddlewares(...MiddlewareFunc) Route
+	GetUrl() string
+	execute(Context)
+}
+
+var _ Route = (*route)(nil)
+
+func newRoute(url string, fn HandlerFunc) *route {
 	return &route{
 		fullUrl: url,
 		chain:   []HandlerFunc{fn},
@@ -49,7 +57,7 @@ func (route *route) registerMiddleware(mw MiddlewareFunc) *route {
 
 // RegisterMiddlewares registers all the given middlewares one-by-one,
 // then returns the route pointer.
-func (route *route) RegisterMiddlewares(mws ...MiddlewareFunc) *route {
+func (route *route) RegisterMiddlewares(mws ...MiddlewareFunc) Route {
 	if len(mws) == 0 {
 		return route
 	}
@@ -62,11 +70,12 @@ func (route *route) RegisterMiddlewares(mws ...MiddlewareFunc) *route {
 	return route
 }
 
-func (route *route) getChain() HandlerFunc {
-	return route.chain[0]
+func (route *route) GetUrl() string {
+	return route.fullUrl
 }
 
-// getHandler returns the actual handler, which is at the end of the chain.
-func (route *route) getHandler() HandlerFunc {
-	return route.chain[len(route.chain)-1]
+func (route *route) execute(ctx Context) {
+	if len(route.chain) > 0 {
+		route.chain[0](ctx)
+	}
 }

@@ -23,12 +23,21 @@ const (
 	// If there statusCode written to the context,
 	// this default will be written to the response.
 	defaultStatusCode = http.StatusOK
+
+	bindedValueKey bindValueKey = "bindedValues"
+
+	routeParamsKey contextKey = "__routeParams__"
 )
 
 type (
 	pathParams    map[string]string
 	contextIdChan <-chan uint64
 	anyValue      interface{}
+
+	bindValueKey string
+	contextKey   string
+
+	contextMap map[contextKey]anyValue
 )
 
 type responseWriter struct {
@@ -44,8 +53,7 @@ type context struct {
 	writer  *responseWriter
 	request *http.Request
 
-	params pathParams
-	body   []byte
+	body []byte
 
 	contextId     uint64
 	contextIdChan contextIdChan
@@ -61,6 +69,7 @@ type Context interface {
 	GetRequest() *http.Request
 	GetRequestMethod() string
 	GetUrl() string
+	GetCleanedUrl() string
 	GetQueryParams() url.Values
 	GetQueryParam(string) string
 	BindValue(contextKey, any)
@@ -72,15 +81,17 @@ type Context interface {
 	GetRequestHeaders() http.Header
 	GetBody() []byte
 
-	// FormData
-	// Parse()
-	// GetFormValue()
-	// GetFormFile()
+	// TODO:
+	// – FormData
+	// – Parse()
+	// – GetFormValue()
+	// – GetFormFile()
 
 	// ---- Response
 	SendJson(anyValue)
 	SendNotFound()
 	SendInternalServerError()
+	SendMethodNotAllowed()
 	SendOk()
 	SendUnauthorized()
 	SendRaw([]byte, int, http.Header)
@@ -93,13 +104,10 @@ type Context interface {
 
 var _ Context = (*context)(nil)
 
-type contextKey string
-
 // newContext creates and returns a new context.
-func newContext(ciChan contextIdChan) Context {
+func newContext(ciChan contextIdChan) *context {
 	return &context{
 		contextIdChan: ciChan,
-		params:        make(pathParams),
 		writer:        newResponseWriter(),
 	}
 }
@@ -115,7 +123,6 @@ func (ctx *context) reset(w http.ResponseWriter, r *http.Request) {
 	ctx.ctx = ctxpkg.Background()
 	ctx.writer.w = w
 	ctx.request = r
-	ctx.params = make(pathParams)
 	ctx.startTime = time.Now()
 
 	// We set the next id from the channel.
@@ -151,13 +158,21 @@ func (ctx *context) GetRequestMethod() string {
 
 // BindValue binds a given value – with any – to the ongoing request with certain key.
 func (ctx *context) BindValue(key contextKey, value any) {
-	contextWithValue := ctxpkg.WithValue(ctx.ctx, key, value)
-	ctx.ctx = contextWithValue
+	bindedValues, ok := ctx.ctx.Value(bindedValueKey).(contextMap)
+	if bindedValues == nil || !ok {
+		bindedValues = make(contextMap, 0)
+		ctx.ctx = ctxpkg.WithValue(ctx.ctx, bindedValueKey, bindedValues)
+	}
+	bindedValues[key] = value
 }
 
 // GetBindedValue returns the binded from the request.
 func (ctx *context) GetBindedValue(key contextKey) any {
-	return ctx.ctx.Value(key)
+	bindedValues := ctx.ctx.Value(bindedValueKey).(contextMap)
+	if bindedValues == nil {
+		return nil
+	}
+	return bindedValues[key]
 }
 
 // GetlUrl returns the full URL with all queryParams included.
@@ -168,10 +183,10 @@ func (ctx *context) GetUrl() string {
 	return ctx.request.RequestURI
 }
 
-// GetUrlWithoutQueryParams returns the url
+// GetCleanedUrl returns the url
 // without query params, it there is any.
-func (ctx *context) GetUrlWithoutQueryParams() string {
-	return removeQueryParts(ctx.GetUrl())
+func (ctx *context) GetCleanedUrl() string {
+	return removeQueryPart(ctx.GetUrl())
 }
 
 // GetQueryParams returns the query params of the url.
@@ -208,19 +223,18 @@ func (ctx *context) GetContentType() string {
 	return ctx.GetRequestHeader(ctHeader)
 }
 
-// setParams binds the params to the context.
-func (ctx *context) setParams(params pathParams) {
-	ctx.params = params
-}
-
 // GetParam returns the value of the param identified by the given key.
 func (ctx *context) GetParam(key string) string {
-	return ctx.params[key]
+	return ctx.GetParams()[key]
 }
 
 // GetParams returns all the path params associated with thre context.
 func (ctx *context) GetParams() pathParams {
-	return ctx.params
+	params, ok := ctx.GetBindedValue(routeParamsKey).(pathParams)
+	if !ok {
+		return map[string]string{}
+	}
+	return params
 }
 
 // SendRaw writes the given slice of bytes, statusCode and header to the response.
@@ -268,6 +282,11 @@ func (ctx *context) SendOk() {
 // SendNotFound sends a HTTP 404 error.
 func (ctx *context) SendNotFound() {
 	ctx.SendHttpError(http.StatusNotFound)
+}
+
+// SendMethodNotAllowed sends a HTTP 405 error.
+func (ctx *context) SendMethodNotAllowed() {
+	ctx.SendHttpError(http.StatusMethodNotAllowed)
 }
 
 // SendUnauthorized send a HTTP 401 error.
