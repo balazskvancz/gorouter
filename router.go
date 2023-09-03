@@ -314,6 +314,10 @@ func (r *router) Serve(ctx Context) {
 
 	routeNode := tree.Find(ctx.GetCleanedUrl())
 	if routeNode == nil {
+		if r.notFoundHandler != nil {
+			r.notFoundHandler(ctx)
+			return
+		}
 		ctx.SendNotFound()
 		return
 	}
