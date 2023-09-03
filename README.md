@@ -36,7 +36,7 @@ var customNotFoundHandler = func (ctx gorouter.Context) {
     Msg: "not found",
   }
 
-  ctx.sendJson(&data)
+  ctx.SendJson(&data)
 }
 
 r := gorouter.New(
@@ -45,7 +45,7 @@ r := gorouter.New(
   // Maximum of 50Mb formData body.
   gorouter.WithMaxBodySize(50<<20),
   // Sets the method in case of not finding a matching route.
-  gorouter.WithNotFoundHanler(customNotFoundHandler) 
+  gorouter.WithNotFoundHandler(customNotFoundHandler),
 )
 ```
 
