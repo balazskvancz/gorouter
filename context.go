@@ -22,7 +22,10 @@ const (
 
 	// If there statusCode written to the context,
 	// this default will be written to the response.
-	defaultStatusCode = http.StatusOK
+	defaultStatusCode int = http.StatusOK
+
+	// By default there is a maximum of 10MB size of formBody.
+	defaultMaxFormBodySize uint64 = 10 << 20
 
 	bindedValueKey bindValueKey = "bindedValues"
 
@@ -58,6 +61,7 @@ type context struct {
 	contextId     uint64
 	contextIdChan contextIdChan
 	startTime     time.Time
+	maxBodySize   uint64
 }
 
 type Context interface {
@@ -96,25 +100,27 @@ type Context interface {
 	SendUnauthorized()
 	SendRaw([]byte, int, http.Header)
 	Pipe(*http.Response)
-
 	SetStatusCode(int)
 	WriteResponse(b []byte)
 	AppendHttpHeader(header http.Header)
+	WriteToResponseNow()
 }
 
 var _ Context = (*context)(nil)
 
 // newContext creates and returns a new context.
-func newContext(ciChan contextIdChan) *context {
+func newContext(ciChan contextIdChan, defaultStatusCode int, maxBodySize uint64) *context {
 	return &context{
 		contextIdChan: ciChan,
-		writer:        newResponseWriter(),
+		writer:        newResponseWriter(defaultStatusCode),
+		maxBodySize:   maxBodySize,
 	}
 }
 
-func newResponseWriter() *responseWriter {
+func newResponseWriter(statusCode int) *responseWriter {
 	return &responseWriter{
-		header: http.Header{},
+		statusCode: statusCode,
+		header:     http.Header{},
 	}
 }
 
@@ -328,6 +334,11 @@ func (ctx *context) AppendHttpHeader(header http.Header) {
 	}
 }
 
+// WriteToResponseNow writes the actual response of context to the underlying connection.
+func (ctx *context) WriteToResponseNow() {
+	ctx.writer.writeToResponse()
+}
+
 func (ctx *context) discard() {
 	m := ctx.GetRequestMethod()
 
@@ -391,6 +402,9 @@ func (rw *responseWriter) writeToResponse() {
 
 	finalStatusCode := func() int {
 		if rw.statusCode == 0 {
+			// TODO: change it to logger
+			fmt.Printf("attempted to write '0' status\n")
+			// Just in case there is a fallback to it.
 			return defaultStatusCode
 		}
 		return rw.statusCode

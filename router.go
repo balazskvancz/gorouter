@@ -38,12 +38,22 @@ const (
 	defaultAddress int = 8000
 )
 
-type router struct {
-	// The base running context of the router, use it for cancellation.
-	ctx ctxpkg.Context
-
+type routerInfo struct {
 	// The address where the router will be listening.
 	address int
+
+	// The maximum size of the body in case in multipart/form-data content.
+	maxFormSize uint64
+
+	//
+	defaultResponseStatusCode int
+}
+
+type router struct {
+	routerInfo
+
+	// The base running context of the router, use it for cancellation.
+	ctx ctxpkg.Context
 
 	// Trees for all the registered endpoints.
 	// Every HTTP Method gets a different, by default empty
@@ -84,7 +94,27 @@ type router struct {
 func WithAddress(address int) routerOptionFunc {
 	return func(r *router) {
 		if address > 0 {
-			r.address = address
+			r.routerInfo.address = address
+		}
+	}
+}
+
+// WithMaxBodySize allows to configure maximum
+// size incoming, decodable formdata.
+func WithMaxBodySize(size uint64) routerOptionFunc {
+	return func(r *router) {
+		if size > 0 {
+			r.routerInfo.maxFormSize = size
+		}
+	}
+}
+
+// WithDefaultStatusCode allows to configure the default
+// statusCode of the response without specifying it explicitly.
+func WithDefaultStatusCode(statusCode int) routerOptionFunc {
+	return func(r *router) {
+		if statusCode > 0 {
+			r.routerInfo.defaultResponseStatusCode = statusCode
 		}
 	}
 }
@@ -140,18 +170,17 @@ func New(opts ...routerOptionFunc) Router {
 	ctxIdChannel := getContextIdChan()
 
 	r := &router{
-		address: defaultAddress,
+		routerInfo: routerInfo{
+			address:                   defaultAddress,
+			defaultResponseStatusCode: defaultStatusCode,
+			maxFormSize:               defaultMaxFormBodySize,
+		},
 
 		// By deafult we simply use the Background context.
 		ctx: ctxpkg.Background(),
 
 		middlewares: make(middlewareRegistry, 0),
 		methodTrees: make(methodTree),
-		contextPool: sync.Pool{
-			New: func() any {
-				return newContext(ctxIdChannel)
-			},
-		},
 
 		notFoundHandler: nil,
 		optionsHandler:  nil,
@@ -160,6 +189,15 @@ func New(opts ...routerOptionFunc) Router {
 
 	for _, o := range opts {
 		o(r)
+	}
+
+	r.contextPool = sync.Pool{
+		New: func() any {
+			return newContext(
+				ctxIdChannel,
+				r.routerInfo.defaultResponseStatusCode,
+				r.maxFormSize)
+		},
 	}
 
 	return r
@@ -260,6 +298,14 @@ func (r *router) Serve(ctx Context) {
 		}
 	}()
 
+	// In case of HTTP OPTIONS, we use preregistered handler.
+	if ctx.GetRequestMethod() == http.MethodOptions {
+		if r.optionsHandler != nil {
+			r.optionsHandler(ctx)
+		}
+		return
+	}
+
 	tree, ok := r.methodTrees[ctx.GetRequestMethod()]
 	if !ok {
 		ctx.SendMethodNotAllowed()
@@ -307,7 +353,8 @@ func (router *router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx.reset(w, r)
 
 	router.Serve(ctx)
-	ctx.writer.writeToResponse()
+	// Must be moved into postRunnerMiddlewares.
+	ctx.WriteToResponseNow()
 
 	// Release every pointer then put it back to the pool.
 	// If we didnt release the all the pointers, then the GC

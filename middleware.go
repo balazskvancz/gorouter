@@ -55,49 +55,30 @@ var _ Middleware = (*middleware)(nil)
 
 // DoesMatch returns whether a certain middleware is matching
 // for a given Context.
-func (mw *middleware) DoesMatch(_ Context) bool {
-	return true
+func (mw *middleware) DoesMatch(ctx Context) bool {
+	return mw.matcher(ctx)
 }
 
-// Executes
+// Execute executes the underlying handler with the given context
+// and the Handler as next to be called.
 func (mw *middleware) Execute(ctx Context, next HandlerFunc) {
 	mw.handler(ctx, next)
 }
 
 func (m middlewares) createChain(next HandlerFunc) HandlerFunc {
 	return func(ctx Context) {
-		if len(m) == 0 {
+		if len(m) == 0 { // Its more verbose than checking for m == nil.
 			next(ctx)
 			return
 		}
 
-		// funcSlice := make([]HandlerFunc, len(m))
-
-		var foo = reduceRight(m, func(acc HandlerFunc, curr Middleware) HandlerFunc {
+		var handler = reduceRight(m, func(acc HandlerFunc, curr Middleware) HandlerFunc {
 			return func(ctx Context) {
 				curr.Execute(ctx, acc)
 			}
 		}, next)
 
-		foo(ctx)
-
-		// 		funcSlice[len(m)-1] = func(ctx Context) {
-		// m[len(m)-1].Execute(ctx, next)
-		// }
-
-		// for i := len(m) - 2; i >= 0; i-- {
-		// var idx = i
-		// funcSlice[i] = func(ctx Context) {
-		// m[idx].Execute(ctx, funcSlice[idx+1])
-		// }
-		// }
-
-		// var nextFunc HandlerFunc = next
-
-		// }
-		// nextFunc(ctx)
-
-		// funcSlice[0](ctx)
+		handler(ctx)
 	}
 }
 
