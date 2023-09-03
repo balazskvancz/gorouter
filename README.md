@@ -70,7 +70,7 @@ cancel() // It stops the running of the router.
 
 ## Registering endpoints
 
-Currently only five methody types are implemented – there is no technical limit, I just dont use the others :) – and thes are: `GET`, `POST`, `PUT`, `DELETE` and `HEAD`. Each of these methods have a correspondig method attached to the router instance, where one can register a endpoint by given the URL and the handler function itself.
+Currently only five method types are implemented – there is no technical limit, I just dont use the others :) – and these are: `GET`, `POST`, `PUT`, `DELETE` and `HEAD`. Each of these methods have a correspondig method attached to the router instance, where one can register an endpoint by the given URL and the handler function itself.
 
 Of course, there is possibility to register routes with wildcard path parameters, which are essential in REST.
 
@@ -187,4 +187,33 @@ The execution order is follows this pattern:
 
 ### Pre and PostRunner global middlewares
 
+The only difference between the these middlewares are the registration function.
+
+```go
+r := gorouter.New()
+
+preMw := gorouter.NewMiddleware(func(ctx gorouter.Context, next gorouter.HandlerFunc) {
+  // pre logic.
+  next(ctx)
+})
+
+postMw := gorouter.NewMiddleware(func(ctx gorouter.Context, next gorouter.HandlerFunc) {
+  // post logic.
+  next(ctx)
+})
+
+r.RegisterMiddlewares(preMw)
+r.RegisterPostMiddlewares(postMw)
+
+```
+
 ## Context
+
+The main way to interacting with the incoming request and the response is done by the abstraction that the Context implements. From reading the incoming postData to writing the response, everything this done by this interface.
+
+Every HandlerFunc we want to register as a handler endpoint, should have a function signature like this:
+```go
+func doSomeThingHandler(ctx gorouter.Context) {
+  // 
+}
+```

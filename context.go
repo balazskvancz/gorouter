@@ -29,7 +29,8 @@ const (
 
 	bindedValueKey bindValueKey = "bindedValues"
 
-	routeParamsKey contextKey = "__routeParams__"
+	routeParamsKey  contextKey = "__routeParams__"
+	incomingBodyKey contextKey = "__incomingBody__"
 )
 
 type (
@@ -55,8 +56,6 @@ type context struct {
 	ctx     ctxpkg.Context
 	writer  *responseWriter
 	request *http.Request
-
-	body []byte
 
 	contextId     uint64
 	contextIdChan contextIdChan
@@ -209,7 +208,11 @@ func (ctx *context) GetQueryParam(key string) string {
 
 // GetBody returns the body read from the incoming request.
 func (ctx *context) GetBody() []byte {
-	return ctx.body
+	b, ok := ctx.GetBindedValue(incomingBodyKey).([]byte)
+	if !ok {
+		return nil
+	}
+	return b
 }
 
 // GetRequestHeaders returns all the headers from the request.

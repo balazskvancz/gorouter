@@ -3,6 +3,7 @@ package gorouter
 import (
 	ctxpkg "context"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
@@ -32,10 +33,16 @@ type (
 	PanicHandlerFunc func(*Context, interface{})
 
 	routerOptionFunc func(*router)
+
+	bodyReaderFn func(*http.Request) []byte
 )
 
 const (
 	defaultAddress int = 8000
+)
+
+var (
+	couldReadBody []string = []string{http.MethodPost, http.MethodPut}
 )
 
 type routerInfo struct {
@@ -87,6 +94,10 @@ type router struct {
 
 	// Custom handler function for panics.
 	panicHandler PanicHandlerFunc
+
+	// A custom function to read the body of the
+	// incoming request in advance.
+	bodyReader bodyReaderFn
 }
 
 // WithAddress allows to configure address of the router
@@ -151,17 +162,12 @@ func WithPanicHandler(h PanicHandlerFunc) routerOptionFunc {
 	}
 }
 
-func getContextIdChan() contextIdChan {
-	ch := make(chan uint64)
-	go func() {
-		var counter uint64 = 1
-		for {
-			ch <- counter
-
-			counter++
-		}
-	}()
-	return ch
+// WithBodyReader allows to configure a default body reader function
+// or disable it (by passing in <nil>).
+func WithBodyReader(reader bodyReaderFn) routerOptionFunc {
+	return func(r *router) {
+		r.bodyReader = reader
+	}
 }
 
 // New returns a new Router instance decorated
@@ -182,9 +188,11 @@ func New(opts ...routerOptionFunc) Router {
 		middlewares: make(middlewareRegistry, 0),
 		methodTrees: make(methodTree),
 
-		notFoundHandler: nil,
+		notFoundHandler: defaultNotFoundHandler,
 		optionsHandler:  nil,
 		panicHandler:    nil,
+
+		bodyReader: defaultBodyReader,
 	}
 
 	for _, o := range opts {
@@ -196,7 +204,8 @@ func New(opts ...routerOptionFunc) Router {
 			return newContext(
 				ctxIdChannel,
 				r.routerInfo.defaultResponseStatusCode,
-				r.maxFormSize)
+				r.maxFormSize,
+			)
 		},
 	}
 
@@ -216,6 +225,14 @@ func (r *router) ListenWithContext(ctx ctxpkg.Context) {
 		Addr:    addr,
 		Handler: r,
 	}
+
+	// If it was not disabled during by the opts,
+	// then we append the middleware to preRunners.
+	if r.bodyReader != nil {
+		r.RegisterMiddlewares(r.getBodyReaderMiddleware())
+	}
+
+	r.RegisterPostMiddlewares(getWriterPostMiddleware())
 
 	go func() {
 		if err := server.ListenAndServe(); err != nil {
@@ -269,27 +286,6 @@ func (r *router) Head(url string, handler HandlerFunc) Route {
 	return r.addRoute(http.MethodHead, url, handler)
 }
 
-func (r *router) addRoute(method string, url string, handler HandlerFunc) Route {
-	// Get the associated tree OR create one.
-	tree := func() *tree {
-		if t, ok := r.methodTrees[method]; ok {
-			return t
-		}
-		t := newTree()
-		r.methodTrees[method] = t
-		return t
-	}()
-
-	route := newRoute(url, handler)
-
-	if err := tree.Insert(url, route); err != nil {
-		// TODO: error handling
-		fmt.Println(err.Error())
-	}
-
-	return route
-}
-
 // Serve seaches for the right handler – and middleware – based upon the given context.
 func (r *router) Serve(ctx Context) {
 	defer func() {
@@ -298,53 +294,20 @@ func (r *router) Serve(ctx Context) {
 		}
 	}()
 
-	// In case of HTTP OPTIONS, we use preregistered handler.
-	if ctx.GetRequestMethod() == http.MethodOptions {
-		if r.optionsHandler != nil {
-			r.optionsHandler(ctx)
-		}
-		return
-	}
-
-	tree, ok := r.methodTrees[ctx.GetRequestMethod()]
-	if !ok {
-		ctx.SendMethodNotAllowed()
-		return
-	}
-
-	routeNode := tree.Find(ctx.GetCleanedUrl())
-	if routeNode == nil {
-		if r.notFoundHandler != nil {
-			r.notFoundHandler(ctx)
-			return
-		}
-		ctx.SendNotFound()
-		return
-	}
-
 	var (
-		params = routeNode.GetParams()
-		route  = routeNode.GetValue()
+		handler = r.getHandler(ctx)
 
-		preMw = r.filterMatchinMiddleware(ctx, MiddlewarePreRunner)
-		// postMw = r.filterMatchinMiddleware(ctx, MiddlewarePostRunner)
+		preMw  = r.filterMatchinMiddleware(ctx, MiddlewarePreRunner)
+		postMw = r.filterMatchinMiddleware(ctx, MiddlewarePostRunner)
 	)
 
-	// We bind the matched params to the Context with
-	// the predefined key. NOTE: do not use it anywhere else!
-	if len(params) > 0 {
-		p := make(pathParams, len(params))
-		for k, v := range params {
-			p[k] = v
-		}
-
-		ctx.BindValue(routeParamsKey, p)
-		ctx.BindValue("fos", "szar")
-	}
-
 	// Then simply execute the chain.
-	chain := preMw.createChain(route.execute)
-	chain(ctx)
+	var (
+		preChain  = preMw.createChain(handler)
+		postChain = postMw.createChain(func(_ Context) {})
+	)
+	preChain(ctx)
+	postChain(ctx)
 }
 
 // ServeHTTP is the main entrypoint for every incoming HTTP requests.
@@ -358,7 +321,6 @@ func (router *router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	router.Serve(ctx)
 	// Must be moved into postRunnerMiddlewares.
-	ctx.WriteToResponseNow()
 
 	// Release every pointer then put it back to the pool.
 	// If we didnt release the all the pointers, then the GC
@@ -393,4 +355,124 @@ func (router *router) filterMatchinMiddleware(ctx Context, mwType middlewareType
 		}
 	}
 	return mm
+}
+
+func getContextIdChan() contextIdChan {
+	ch := make(chan uint64)
+	go func() {
+		var counter uint64 = 1
+		for {
+			ch <- counter
+			counter++
+		}
+	}()
+	return ch
+}
+
+func (r *router) addRoute(method string, url string, handler HandlerFunc) Route {
+	// Get the associated tree OR create one.
+	tree := func() *tree {
+		if t, ok := r.methodTrees[method]; ok {
+			return t
+		}
+		t := newTree()
+		r.methodTrees[method] = t
+		return t
+	}()
+
+	route := newRoute(url, handler)
+
+	if err := tree.Insert(url, route); err != nil {
+		// TODO: error handling
+		fmt.Println(err.Error())
+	}
+
+	return route
+}
+
+func defaultNotFoundHandler(ctx Context) {
+	ctx.SendNotFound()
+}
+
+func defaultBodyReader(r *http.Request) []byte {
+	if r == nil {
+		return nil
+	}
+	defer r.Body.Close()
+
+	b, err := io.ReadAll(r.Body)
+	if err != nil {
+		return nil
+	}
+	return b
+}
+
+func (r *router) getHandler(ctx Context) HandlerFunc {
+	// In case of HTTP OPTIONS, we use preregistered handler.
+	if ctx.GetRequestMethod() == http.MethodOptions {
+		if r.optionsHandler != nil {
+			return r.optionsHandler
+		}
+		return func(_ Context) {}
+	}
+
+	tree, ok := r.methodTrees[ctx.GetRequestMethod()]
+	if !ok {
+		return func(ctx Context) {
+			ctx.SendMethodNotAllowed()
+		}
+	}
+
+	routeNode := tree.Find(ctx.GetCleanedUrl())
+	if routeNode == nil {
+		if r.notFoundHandler != nil {
+			return r.notFoundHandler
+		}
+		return func(_ Context) {}
+	}
+
+	var (
+		params = routeNode.GetParams()
+		route  = routeNode.GetValue()
+	)
+
+	// We bind the matched params to the Context with
+	// the predefined key. NOTE: do not use it anywhere else!
+	if len(params) > 0 {
+		p := make(pathParams, len(params))
+		for k, v := range params {
+			p[k] = v
+		}
+
+		ctx.BindValue(routeParamsKey, p)
+	}
+	return route.execute
+}
+
+func (r *router) getBodyReaderMiddleware() Middleware {
+	var matcher = func(ctx Context) bool {
+		if r.bodyReader == nil {
+			return false
+		}
+		for _, e := range couldReadBody {
+			if e == ctx.GetRequestMethod() {
+				return true
+			}
+		}
+		return false
+	}
+
+	var mw = func(ctx Context, next HandlerFunc) {
+		ctx.BindValue(incomingBodyKey, r.bodyReader(ctx.GetRequest()))
+		next(ctx)
+	}
+
+	return NewMiddleware(mw, matcher)
+}
+
+func getWriterPostMiddleware() Middleware {
+	return NewMiddleware(func(ctx Context, next HandlerFunc) {
+		ctx.WriteToResponseNow()
+		next(ctx)
+	})
 }
