@@ -7,30 +7,37 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
 
 const (
-	ctHeader = "Content-Type"
+	ctHeader string = "Content-Type"
 
-	JsonContentType     = "application/json"
-	JsonContentTypeUTF8 = JsonContentType + "; charset=UTF-8"
-	TextHtmlContentType = "text/html"
+	JsonContentType          string = "application/json"
+	JsonContentTypeUTF8      string = JsonContentType + "; charset=UTF-8"
+	TextHtmlContentType      string = "text/html"
+	MultiPartFormContentType string = "multipart/form-data"
 
 	// If there statusCode written to the context,
 	// this default will be written to the response.
 	defaultStatusCode int = http.StatusOK
 
 	// By default there is a maximum of 10MB size of formBody.
-	defaultMaxFormBodySize uint64 = 10 << 20
+	defaultMaxFormBodySize int64 = 10 << 20
 
 	bindedValueKey bindValueKey = "bindedValues"
 
 	routeParamsKey  contextKey = "__routeParams__"
 	incomingBodyKey contextKey = "__incomingBody__"
+)
+
+var (
+	ErrCtNotMultipart = errors.New("the content-type is not multipart/form-data")
 )
 
 type (
@@ -60,7 +67,9 @@ type context struct {
 	contextId     uint64
 	contextIdChan contextIdChan
 	startTime     time.Time
-	maxBodySize   uint64
+	maxBodySize   int64
+
+	isFormParsed bool
 }
 
 type Context interface {
@@ -83,12 +92,9 @@ type Context interface {
 	GetParams() pathParams
 	GetRequestHeaders() http.Header
 	GetBody() []byte
-
-	// TODO:
-	// – FormData
-	// – Parse()
-	// – GetFormValue()
-	// – GetFormFile()
+	ParseForm() error
+	GetFormFile(string) (File, error)
+	GetFormValue(string) (string, error)
 
 	// ---- Response
 	SendJson(anyValue)
@@ -107,8 +113,21 @@ type Context interface {
 
 var _ Context = (*context)(nil)
 
+type formFile struct {
+	file   multipart.File
+	header *multipart.FileHeader
+}
+
+type File interface {
+	GetName() string
+	GetSize() int64
+	Close() error
+	WriteTo(io.Writer) (int64, error)
+	SaveTo(string) error
+}
+
 // newContext creates and returns a new context.
-func newContext(ciChan contextIdChan, defaultStatusCode int, maxBodySize uint64) *context {
+func newContext(ciChan contextIdChan, defaultStatusCode int, maxBodySize int64) *context {
 	return &context{
 		contextIdChan: ciChan,
 		writer:        newResponseWriter(defaultStatusCode),
@@ -244,6 +263,48 @@ func (ctx *context) GetParams() pathParams {
 		return map[string]string{}
 	}
 	return params
+}
+
+// ParseForm tries to parse the incoming request as a formdata. Returns error
+// if the content-type is not valid, or the native parse returns error.
+func (ctx *context) ParseForm() error {
+	if ctx.isFormParsed {
+		return nil
+	}
+	if !strings.Contains(ctx.GetContentType(), MultiPartFormContentType) {
+		return ErrCtNotMultipart
+	}
+	ctx.isFormParsed = true
+	return ctx.request.ParseMultipartForm(ctx.maxBodySize)
+}
+
+// GetFormValue returns the value in the form associated with
+// the given key. It calls ParseForm, if has to.
+func (ctx *context) GetFormValue(key string) (string, error) {
+	if !ctx.isFormParsed {
+		if err := ctx.ParseForm(); err != nil {
+			return "", err
+		}
+	}
+	return ctx.request.FormValue(key), nil
+}
+
+// GetFormFile returns the File and and error associated with
+// the given key. It calls ParseForm, if has to.
+func (ctx *context) GetFormFile(key string) (File, error) {
+	if !ctx.isFormParsed {
+		if err := ctx.ParseForm(); err != nil {
+			return nil, err
+		}
+	}
+	file, header, err := ctx.request.FormFile(key)
+	if err != nil {
+		return nil, err
+	}
+	return &formFile{
+		file:   file,
+		header: header,
+	}, nil
 }
 
 // SendRaw writes the given slice of bytes, statusCode and header to the response.
@@ -415,6 +476,38 @@ func (rw *responseWriter) writeToResponse() {
 
 	rw.w.WriteHeader(finalStatusCode)
 	rw.w.Write(rw.b)
+}
+
+// FormFile.
+
+// GetName returns the name of the attached file.
+func (ff *formFile) GetName() string {
+	return ff.header.Filename
+}
+
+// GetSize returns the size of the attached file.
+func (ff *formFile) GetSize() int64 {
+	return ff.header.Size
+}
+
+// Close closes the file.
+func (ff *formFile) Close() error {
+	return ff.file.Close()
+}
+
+// WriteTo writes the content of the file to a certain Writer.
+func (ff *formFile) WriteTo(w io.Writer) (int64, error) {
+	return io.Copy(w, ff.file)
+}
+
+// SaveTo saves a certain file to the given location.
+func (ff *formFile) SaveTo(filePath string) error {
+	file, err := os.Create(filePath)
+	if err != nil {
+		return err
+	}
+	_, err = ff.WriteTo(file)
+	return err
 }
 
 type contextLog struct {

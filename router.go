@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 )
@@ -38,21 +39,38 @@ type (
 )
 
 const (
-	defaultAddress int = 8000
+	defaultAddress    int    = 8000
+	defaultServerName string = "goRouter"
 )
 
 var (
+	// The automatic reading of the incoming postData – if it is enabled –
+	// is only done, if the method of the incoming request is one these methods.
 	couldReadBody []string = []string{http.MethodPost, http.MethodPut}
+
+	// Also connects to body reading. If the content type of
+	// the incoming request is one of the listed types,
+	// then the automatic reading is not perfomed.
+	// Note that, in case of this inspection we look for substring match
+	// not for exact match.
+	// For now, only the multipart/form-data content type is not read
+	// by default, maybe should change it automatic parseing instead of reading.
+	exceptionContentTypes []string = []string{MultiPartFormContentType}
 )
 
 type routerInfo struct {
+	// The name of the specific router instance.
+	serverName string
+
 	// The address where the router will be listening.
 	address int
 
 	// The maximum size of the body in case in multipart/form-data content.
-	maxFormSize uint64
+	maxFormSize int64
 
-	//
+	// The default statusCode of the response.
+	// If no response is written during the execution,
+	// then this code will be written to the response.
 	defaultResponseStatusCode int
 }
 
@@ -112,7 +130,7 @@ func WithAddress(address int) routerOptionFunc {
 
 // WithMaxBodySize allows to configure maximum
 // size incoming, decodable formdata.
-func WithMaxBodySize(size uint64) routerOptionFunc {
+func WithMaxBodySize(size int64) routerOptionFunc {
 	return func(r *router) {
 		if size > 0 {
 			r.routerInfo.maxFormSize = size
@@ -170,6 +188,13 @@ func WithBodyReader(reader bodyReaderFn) routerOptionFunc {
 	}
 }
 
+// WithServerName allows to configure the server name of the instance.
+func WithServerName(name string) routerOptionFunc {
+	return func(r *router) {
+		r.routerInfo.serverName = name
+	}
+}
+
 // New returns a new Router instance decorated
 // by the given optionFuncs.
 func New(opts ...routerOptionFunc) Router {
@@ -177,6 +202,7 @@ func New(opts ...routerOptionFunc) Router {
 
 	r := &router{
 		routerInfo: routerInfo{
+			serverName:                defaultServerName,
 			address:                   defaultAddress,
 			defaultResponseStatusCode: defaultStatusCode,
 			maxFormSize:               defaultMaxFormBodySize,
@@ -453,6 +479,15 @@ func (r *router) getBodyReaderMiddleware() Middleware {
 	var matcher = func(ctx Context) bool {
 		if r.bodyReader == nil {
 			return false
+		}
+		// If the content type of the request
+		// is forbidden to read from eg. multipart/form-data
+		// then this matcher should return false.
+		contentType := ctx.GetContentType()
+		for _, ct := range exceptionContentTypes {
+			if strings.Contains(contentType, ct) {
+				return false
+			}
 		}
 		for _, e := range couldReadBody {
 			if e == ctx.GetRequestMethod() {
