@@ -39,7 +39,7 @@ type (
 )
 
 const (
-	version string = "v0.0.1"
+	version string = "v1.0.0"
 
 	defaultAddress    int    = 8000
 	defaultServerName string = "goRouter"

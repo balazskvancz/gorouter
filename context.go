@@ -207,7 +207,11 @@ func (ctx *context) BindValue(key contextKey, value any) {
 
 // GetBindedValue returns the binded from the request.
 func (ctx *context) GetBindedValue(key contextKey) any {
-	bindedValues := ctx.ctx.Value(bindedValueKey).(contextMap)
+	val := ctx.ctx.Value(bindedValueKey)
+	if val == nil {
+		return nil
+	}
+	bindedValues := val.(contextMap)
 	if bindedValues == nil {
 		return nil
 	}
@@ -273,8 +277,13 @@ func (ctx *context) GetParam(key string) string {
 
 // GetParams returns all the path params associated with thre context.
 func (ctx *context) GetParams() pathParams {
-	params, ok := ctx.GetBindedValue(routeParamsKey).(pathParams)
+	bindedValue := ctx.GetBindedValue(routeParamsKey)
+	if bindedValue == nil {
+		return map[string]string{}
+	}
+	params, ok := bindedValue.(pathParams)
 	if !ok {
+		fmt.Println("not ok")
 		return map[string]string{}
 	}
 	return params
@@ -348,7 +357,7 @@ func (ctx *context) SendJson(data anyValue) {
 		return
 	}
 
-	ctx.SendRaw(b, http.StatusOK, createContentTypeHeader(JsonContentType))
+	ctx.SendRaw(b, http.StatusOK, createContentTypeHeader(JsonContentTypeUTF8))
 }
 
 func createContentTypeHeader(ct string) http.Header {
@@ -458,13 +467,14 @@ func (rw *responseWriter) addHeader(key, value string) {
 }
 
 func (rw *responseWriter) copy(r io.Reader) {
+	if rw == nil {
+		return
+	}
 	buff := &bytes.Buffer{}
-
 	if _, err := io.Copy(buff, r); err != nil {
 		fmt.Println(err)
 		return
 	}
-
 	rw.b = buff.Bytes()
 }
 
