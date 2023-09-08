@@ -51,11 +51,11 @@ r := gorouter.New(
 
 ### Listen
 
-The basic mode to make the router start listening on the given port is by calling `Listen()`. It will be up and running until the container or the CLI is receiving an interrupt or sigterm signal.
+The basic mode to make the router start listening on the given port is by calling `Listen()`. It will be up and running until the context receives termination signal.
 
 ### ListenWithContext
 
-The other way of starting the listening is by calling `ListenWithContext`, where you can pass a context as a parameter, which could have a cancellation of a timeout. Remember, is also ends the listening in case of an interrupt or a sigterm signal.
+The other way of starting the listening is by calling `ListenWithContext`, where you can pass a context as a parameter, which could have a cancellation or a timeout. Remember, is also ends the listening in case of an interrupt or a sigterm signal.
 
 ```go
 r := gorouter.New()
@@ -79,7 +79,7 @@ r := gorouter.New()
 
 r.Get("/api/products/{id}", func (ctx Context) {
   id := ctx.GetParam("id")
-	ctx.WriteResponse([]byte(id))
+  ctx.WriteResponse([]byte(id))
 })
 
 r.Post("/api/products/{id}", func (ctx Context) {
@@ -88,7 +88,7 @@ r.Post("/api/products/{id}", func (ctx Context) {
 })
 ```
 
-Every endpoint can have multiple middlewares that are executed before the registered handlers. Keep in mind, if at least on middleware would not call the `next` function, then the handler – and also the remaining middlewares – wont be executed.
+Every endpoint can have multiple middlewares that are executed before the registered handler. Keep in mind, if at least on middleware would not call the `next` function, then the handler – and also the remaining middlewares – wont be executed.
 
 ```go
 r := gorouter.New()
@@ -176,14 +176,14 @@ This way you can separately test your MiddlewareFunc and also the matcherFunc if
 
 The `NewMiddleware` creates a new Middleware for global registration, and if you dont provide any matcher(s) then, the default one would be used, which means, it would match for each and every context.
 
-Also, it is possible to register more than matchers to global Middleware. In this case, every matcher should be matching. This one is for code reusability.
+Also, it is possible to register more than one matchers to a global Middleware. In this case, every matcher should be matching. This one is for code reusability.
 
-The execution order is follows this pattern:
-  - Execute all global – preRunner – middlewares that are matching for the Context.
-  - Looking up the registered handler from the tree based upon the method and the URL.
-  - Executing the attached middlewares to the endpoint – if there is any.
-  - Executing the handler.
-  - Executing all global – postRunner – middlewares that are matching for the Context.
+The execution order follows this pattern:
+  - execute all global – preRunner – middlewares that are matching for the Context,
+  - looking up the registered handler from the tree based upon the method and the URL,
+  - executing the attached middlewares to the endpoint – if there is any,
+  - executing the handler,
+  - executing all global – postRunner – middlewares that are matching for the Context.
 
 ### Pre and PostRunner global middlewares
 
