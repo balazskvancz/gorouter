@@ -52,9 +52,10 @@ type (
 )
 
 type responseWriter struct {
-	statusCode int
-	header     http.Header
-	b          []byte
+	defaultStatusCode int
+	statusCode        int
+	header            http.Header
+	b                 []byte
 
 	w http.ResponseWriter
 }
@@ -70,9 +71,13 @@ type context struct {
 	maxBodySize   int64
 
 	isFormParsed bool
+
+	logger Logger
 }
 
 type Context interface {
+	Logger
+
 	// ---- Non public package related
 	reset(http.ResponseWriter, *http.Request)
 	empty()
@@ -126,19 +131,27 @@ type File interface {
 	SaveTo(string) error
 }
 
+type contextConfig struct {
+	ciChan      contextIdChan
+	statusCode  int
+	maxBodySize int64
+	logger      Logger
+}
+
 // newContext creates and returns a new context.
-func newContext(ciChan contextIdChan, defaultStatusCode int, maxBodySize int64) *context {
+func newContext(conf contextConfig) *context {
 	return &context{
-		contextIdChan: ciChan,
-		writer:        newResponseWriter(defaultStatusCode),
-		maxBodySize:   maxBodySize,
+		contextIdChan: conf.ciChan,
+		writer:        newResponseWriter(conf.statusCode),
+		maxBodySize:   conf.maxBodySize,
+		logger:        conf.logger,
 	}
 }
 
 func newResponseWriter(statusCode int) *responseWriter {
 	return &responseWriter{
-		statusCode: statusCode,
-		header:     http.Header{},
+		defaultStatusCode: statusCode,
+		header:            http.Header{},
 	}
 }
 
@@ -465,13 +478,13 @@ func (rw *responseWriter) writeToResponse() {
 	}
 
 	finalStatusCode := func() int {
-		if rw.statusCode == 0 {
-			// TODO: change it to logger
-			fmt.Printf("attempted to write '0' status\n")
-			// Just in case there is a fallback to it.
-			return defaultStatusCode
+		if rw.statusCode > 0 {
+			return rw.statusCode
 		}
-		return rw.statusCode
+		if rw.defaultStatusCode > 0 {
+			return rw.defaultStatusCode
+		}
+		return defaultStatusCode
 	}()
 
 	rw.w.WriteHeader(finalStatusCode)
@@ -508,6 +521,21 @@ func (ff *formFile) SaveTo(filePath string) error {
 	}
 	_, err = ff.WriteTo(file)
 	return err
+}
+
+// Info handles info type logging.
+func (ctx *context) Info(format string, v ...any) {
+	ctx.logger.Info(fmt.Sprintf("[%d] %s", ctx.contextId, format), v...)
+}
+
+// Warning handles warning type logging.
+func (ctx *context) Warning(format string, v ...any) {
+	ctx.logger.Warning(fmt.Sprintf("[%d] %s", ctx.contextId, format), v...)
+}
+
+// Error handles error type logging.
+func (ctx *context) Error(format string, v ...any) {
+	ctx.logger.Error(fmt.Sprintf("[%d] %s", ctx.contextId, format), v...)
 }
 
 type contextLog struct {

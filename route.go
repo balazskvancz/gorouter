@@ -40,6 +40,10 @@ func newRoute(url string, fn HandlerFunc) *route {
 }
 
 func (route *route) registerMiddleware(mw MiddlewareFunc) *route {
+	if route == nil {
+		return nil
+	}
+
 	if len(route.chain) == 0 {
 		return route
 	}
@@ -58,6 +62,10 @@ func (route *route) registerMiddleware(mw MiddlewareFunc) *route {
 // RegisterMiddlewares registers all the given middlewares one-by-one,
 // then returns the route pointer.
 func (route *route) RegisterMiddlewares(mws ...MiddlewareFunc) Route {
+	if route == nil {
+		return nil
+	}
+
 	if len(mws) == 0 {
 		return route
 	}
@@ -71,11 +79,14 @@ func (route *route) RegisterMiddlewares(mws ...MiddlewareFunc) Route {
 }
 
 func (route *route) GetUrl() string {
+	if route == nil {
+		return ""
+	}
 	return route.fullUrl
 }
 
 func (route *route) execute(ctx Context) {
-	if len(route.chain) > 0 {
+	if route != nil && len(route.chain) > 0 {
 		route.chain[0](ctx)
 	}
 }

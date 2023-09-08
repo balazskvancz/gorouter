@@ -39,6 +39,8 @@ type (
 )
 
 const (
+	version string = "v0.0.1"
+
 	defaultAddress    int    = 8000
 	defaultServerName string = "goRouter"
 )
@@ -116,6 +118,8 @@ type router struct {
 	// A custom function to read the body of the
 	// incoming request in advance.
 	bodyReader bodyReaderFn
+
+	logger Logger
 }
 
 // WithAddress allows to configure address of the router
@@ -225,13 +229,18 @@ func New(opts ...routerOptionFunc) Router {
 		o(r)
 	}
 
+	logger := newLogger(r.routerInfo.serverName)
+
+	r.logger = logger
+
 	r.contextPool = sync.Pool{
 		New: func() any {
-			return newContext(
-				ctxIdChannel,
-				r.routerInfo.defaultResponseStatusCode,
-				r.maxFormSize,
-			)
+			return newContext(contextConfig{
+				ciChan:      ctxIdChannel,
+				statusCode:  r.routerInfo.defaultResponseStatusCode,
+				maxBodySize: r.maxFormSize,
+				logger:      logger,
+			})
 		},
 	}
 
@@ -262,8 +271,7 @@ func (r *router) ListenWithContext(ctx ctxpkg.Context) {
 
 	go func() {
 		if err := server.ListenAndServe(); err != nil {
-			// TODO: handle error.
-			fmt.Println(err.Error())
+			r.logger.Error(err.Error())
 		}
 	}()
 
@@ -271,10 +279,12 @@ func (r *router) ListenWithContext(ctx ctxpkg.Context) {
 
 	signal.Notify(signalChannel, os.Interrupt, syscall.SIGTERM)
 
+	r.logger.Info("started listening at %s", addr)
+
 	var shutdown = func() {
-		fmt.Println("the router is shutting down...")
+		r.logger.Info("the router is shutting down...")
 		if err := server.Shutdown(ctxpkg.Background()); err != nil {
-			fmt.Println(err.Error())
+			r.logger.Error(err.Error())
 		}
 	}
 
@@ -284,7 +294,7 @@ func (r *router) ListenWithContext(ctx ctxpkg.Context) {
 	case <-ctx.Done():
 		shutdown()
 	}
-	fmt.Println("the router is shutted down...")
+	r.logger.Info("the router is shutted down...")
 }
 
 // Get registers creates and returns new route with HTTP GET method.
@@ -316,7 +326,9 @@ func (r *router) Head(url string, handler HandlerFunc) Route {
 func (r *router) Serve(ctx Context) {
 	defer func() {
 		if val := recover(); val != nil {
-			fmt.Println(val)
+			if errmsg, ok := val.(string); ok {
+				r.logger.Error("captured panic: %s", errmsg)
+			}
 		}
 	}()
 
@@ -409,8 +421,8 @@ func (r *router) addRoute(method string, url string, handler HandlerFunc) Route 
 	route := newRoute(url, handler)
 
 	if err := tree.Insert(url, route); err != nil {
-		// TODO: error handling
-		fmt.Println(err.Error())
+		r.logger.Error(err.Error())
+		return nil
 	}
 
 	return route
