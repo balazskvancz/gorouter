@@ -114,6 +114,8 @@ type Context interface {
 	WriteResponse(b []byte)
 	AppendHttpHeader(header http.Header)
 	WriteToResponseNow()
+
+	GetLog() *contextLog
 }
 
 var _ Context = (*context)(nil)
@@ -546,14 +548,18 @@ type contextLog struct {
 	contextId   uint64
 }
 
-func (ctx *context) getLog() contextLog {
+func (ctx *context) GetLog() *contextLog {
 	elapsedTime := time.Since(ctx.startTime)
 
-	return contextLog{
+	return &contextLog{
 		method:      ctx.GetRequestMethod(),
 		url:         ctx.GetUrl(),
 		code:        ctx.writer.statusCode,
 		elapsedTime: elapsedTime.Milliseconds(),
 		contextId:   ctx.contextId,
 	}
+}
+
+func (cl *contextLog) Serialize() string {
+	return fmt.Sprintf("[%s]\t%s\t%d\t%dms", cl.method, cl.url, cl.code, cl.elapsedTime)
 }

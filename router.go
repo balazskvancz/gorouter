@@ -267,7 +267,11 @@ func (r *router) ListenWithContext(ctx ctxpkg.Context) {
 		r.RegisterMiddlewares(r.getBodyReaderMiddleware())
 	}
 
-	r.RegisterPostMiddlewares(getWriterPostMiddleware())
+	// Registering the logger and writer middleware to the postrunners.
+	r.RegisterPostMiddlewares(
+		getLoggerMiddleware(),
+		getWriterPostMiddleware(),
+	)
 
 	go func() {
 		if err := server.ListenAndServe(); err != nil {
@@ -522,4 +526,13 @@ func getWriterPostMiddleware() Middleware {
 		ctx.WriteToResponseNow()
 		next(ctx)
 	})
+}
+
+func getLoggerMiddleware() Middleware {
+	var mw = func(ctx Context, next HandlerFunc) {
+		log := ctx.GetLog()
+		ctx.Info(log.Serialize())
+	}
+
+	return NewMiddleware(mw)
 }
