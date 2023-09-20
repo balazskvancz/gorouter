@@ -39,7 +39,7 @@ type (
 )
 
 const (
-	version string = "v1.0.0"
+	version string = "v1.0.1"
 
 	defaultAddress    int    = 8000
 	defaultServerName string = "goRouter"
@@ -269,8 +269,8 @@ func (r *router) ListenWithContext(ctx ctxpkg.Context) {
 
 	// Registering the logger and writer middleware to the postrunners.
 	r.RegisterPostMiddlewares(
-		getLoggerMiddleware(),
-		getWriterPostMiddleware(),
+		getWriterPostMiddleware(), // First we write the response to the connection,
+		getLoggerMiddleware(),     // then log write the log to stdout.
 	)
 
 	go func() {
@@ -362,7 +362,6 @@ func (router *router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx.reset(w, r)
 
 	router.Serve(ctx)
-	// Must be moved into postRunnerMiddlewares.
 
 	// Release every pointer then put it back to the pool.
 	// If we didnt release the all the pointers, then the GC
@@ -532,6 +531,7 @@ func getLoggerMiddleware() Middleware {
 	var mw = func(ctx Context, next HandlerFunc) {
 		log := ctx.GetLog()
 		ctx.Info(log.Serialize())
+		next(ctx)
 	}
 
 	return NewMiddleware(mw)
