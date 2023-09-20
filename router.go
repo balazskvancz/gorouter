@@ -31,7 +31,7 @@ type (
 	methodTree       map[string]*tree
 	HandlerFunc      func(Context)
 	MiddlewareFunc   func(Context, HandlerFunc)
-	PanicHandlerFunc func(*Context, interface{})
+	PanicHandlerFunc func(Context, interface{})
 
 	routerOptionFunc func(*router)
 
@@ -39,7 +39,7 @@ type (
 )
 
 const (
-	version string = "v1.0.1"
+	version string = "v1.0.2"
 
 	defaultAddress    int    = 8000
 	defaultServerName string = "goRouter"
@@ -328,13 +328,13 @@ func (r *router) Head(url string, handler HandlerFunc) Route {
 
 // Serve seaches for the right handler – and middleware – based upon the given context.
 func (r *router) Serve(ctx Context) {
-	defer func() {
-		if val := recover(); val != nil {
-			if errmsg, ok := val.(string); ok {
-				r.logger.Error("captured panic: %s", errmsg)
+	if r.panicHandler != nil {
+		defer func() {
+			if val := recover(); val != nil {
+				r.panicHandler(ctx, val)
 			}
-		}
-	}()
+		}()
+	}
 
 	var (
 		handler = r.getHandler(ctx)
