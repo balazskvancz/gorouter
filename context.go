@@ -418,7 +418,7 @@ func (ctx *context) Pipe(res *http.Response) {
 // http.Header to the responses header.
 func (ctx *context) AppendHttpHeader(header http.Header) {
 	for k, v := range header {
-		ctx.writer.addHeader(k, strings.Join(v, "; "))
+		ctx.writer.addHeader(k, strings.Join(v, ", "))
 	}
 }
 
