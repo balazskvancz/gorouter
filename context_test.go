@@ -20,7 +20,7 @@ func TestValueBinding(t *testing.T) {
 
 	type testCase struct {
 		getContext contextFactory
-		key        contextKey
+		key        ContextKey
 		value      any
 	}
 

@@ -32,8 +32,8 @@ const (
 
 	bindedValueKey bindValueKey = "bindedValues"
 
-	routeParamsKey  contextKey = "__routeParams__"
-	incomingBodyKey contextKey = "__incomingBody__"
+	routeParamsKey  ContextKey = "__routeParams__"
+	incomingBodyKey ContextKey = "__incomingBody__"
 )
 
 var (
@@ -46,9 +46,9 @@ type (
 	anyValue      interface{}
 
 	bindValueKey string
-	contextKey   string
+	ContextKey   string
 
-	contextMap map[contextKey]anyValue
+	contextMap map[ContextKey]anyValue
 )
 
 type responseWriter struct {
@@ -89,8 +89,8 @@ type Context interface {
 	GetCleanedUrl() string
 	GetQueryParams() url.Values
 	GetQueryParam(string) string
-	BindValue(contextKey, any)
-	GetBindedValue(contextKey) any
+	BindValue(ContextKey, any)
+	GetBindedValue(ContextKey) any
 	GetRequestHeader(string) string
 	GetContentType() string
 	GetParam(string) string
@@ -196,7 +196,7 @@ func (ctx *context) GetRequestMethod() string {
 }
 
 // BindValue binds a given value – with any – to the ongoing request with certain key.
-func (ctx *context) BindValue(key contextKey, value any) {
+func (ctx *context) BindValue(key ContextKey, value any) {
 	bindedValues, ok := ctx.ctx.Value(bindedValueKey).(contextMap)
 	if bindedValues == nil || !ok {
 		bindedValues = make(contextMap, 0)
@@ -206,7 +206,7 @@ func (ctx *context) BindValue(key contextKey, value any) {
 }
 
 // GetBindedValue returns the binded from the request.
-func (ctx *context) GetBindedValue(key contextKey) any {
+func (ctx *context) GetBindedValue(key ContextKey) any {
 	val := ctx.ctx.Value(bindedValueKey)
 	if val == nil {
 		return nil
@@ -485,7 +485,7 @@ func (rw *responseWriter) writeToResponse() {
 	}
 
 	for k, v := range rw.header {
-		value := strings.Join(v, ";")
+		value := strings.Join(v, ",")
 		rw.w.Header().Add(k, value)
 	}
 
