@@ -102,7 +102,7 @@ type Context interface {
 	GetFormValue(string) (string, error)
 
 	// ---- Response
-	SendJson(anyValue)
+	SendJson(anyValue, ...int)
 	SendNotFound()
 	SendInternalServerError()
 	SendMethodNotAllowed()
@@ -349,7 +349,14 @@ func (ctx *context) SetStatusCode(statusCode int) {
 }
 
 // SendsJson send a JSON response to client.
-func (ctx *context) SendJson(data anyValue) {
+func (ctx *context) SendJson(data anyValue, code ...int) {
+	statusCode := func() int {
+		if len(code) > 0 {
+			return code[0]
+		}
+		return http.StatusOK
+	}()
+
 	b, err := json.Marshal(data)
 	if err != nil {
 		fmt.Printf("marshal err: %v\n", err)
@@ -357,7 +364,7 @@ func (ctx *context) SendJson(data anyValue) {
 		return
 	}
 
-	ctx.SendRaw(b, http.StatusOK, createContentTypeHeader(JsonContentTypeUTF8))
+	ctx.SendRaw(b, statusCode, createContentTypeHeader(JsonContentTypeUTF8))
 }
 
 func createContentTypeHeader(ct string) http.Header {
