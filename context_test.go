@@ -29,11 +29,11 @@ func TestValueBinding(t *testing.T) {
 		{
 			getContext: func(t *testing.T) Context {
 				var (
-					ctx = newContext(contextConfig{})
+					ctx = NewContext(ContextConfig{})
 					rec = httptest.NewRequest(http.MethodGet, "/foo", nil)
 				)
 
-				ctx.reset(httptest.NewRecorder(), rec)
+				ctx.Reset(httptest.NewRecorder(), rec)
 
 				return ctx
 			},
@@ -44,11 +44,11 @@ func TestValueBinding(t *testing.T) {
 		{
 			getContext: func(t *testing.T) Context {
 				var (
-					ctx = newContext(contextConfig{})
+					ctx = NewContext(ContextConfig{})
 					rec = httptest.NewRequest(http.MethodGet, "/foo", nil)
 				)
 
-				ctx.reset(httptest.NewRecorder(), rec)
+				ctx.Reset(httptest.NewRecorder(), rec)
 
 				ctx.BindValue("foo", "bar")
 
@@ -94,11 +94,11 @@ func TestGetParams(t *testing.T) {
 			name: "the function returns an empty map, if there is no params",
 			getContext: func(t *testing.T) Context {
 				var (
-					ctx = newContext(contextConfig{})
+					ctx = NewContext(ContextConfig{})
 					req = httptest.NewRequest(http.MethodGet, "/foo", nil)
 				)
 
-				ctx.reset(nil, req)
+				ctx.Reset(nil, req)
 
 				return ctx
 			},
@@ -108,11 +108,11 @@ func TestGetParams(t *testing.T) {
 			name: "the function returns the associated params map",
 			getContext: func(t *testing.T) Context {
 				var (
-					ctx = newContext(contextConfig{})
+					ctx = NewContext(ContextConfig{})
 					req = httptest.NewRequest(http.MethodGet, "/foo", nil)
 				)
 
-				ctx.reset(nil, req)
+				ctx.Reset(nil, req)
 
 				ctx.BindValue(routeParamsKey, mockParams)
 
@@ -154,11 +154,11 @@ func TestResponse(t *testing.T) {
 
 	var defaultGetCtx = func(t *testing.T, res http.ResponseWriter) Context {
 		var (
-			ctx = newContext(contextConfig{})
+			ctx = NewContext(ContextConfig{})
 			req = httptest.NewRequest(http.MethodGet, "/api", nil)
 		)
 
-		ctx.reset(res, req)
+		ctx.Reset(res, req)
 
 		return ctx
 	}

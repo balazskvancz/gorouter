@@ -78,9 +78,10 @@ type context struct {
 type Context interface {
 	Logger
 
-	// ---- Non public package related
-	reset(http.ResponseWriter, *http.Request)
-	empty()
+	// ---- Methods about the Context itself.
+	Reset(http.ResponseWriter, *http.Request)
+	Empty()
+	GetContextId() uint64
 
 	// ---- Request
 	GetRequest() *http.Request
@@ -133,20 +134,20 @@ type File interface {
 	SaveTo(string) error
 }
 
-type contextConfig struct {
-	ciChan      contextIdChan
-	statusCode  int
-	maxBodySize int64
-	logger      Logger
+type ContextConfig struct {
+	ContextIdChannel          contextIdChan
+	DefaultResponseStatusCode int
+	MaxIncomingBodySize       int64
+	Logger                    Logger
 }
 
-// newContext creates and returns a new context.
-func newContext(conf contextConfig) *context {
+// NewContext creates and returns a new context.
+func NewContext(conf ContextConfig) *context {
 	return &context{
-		contextIdChan: conf.ciChan,
-		writer:        newResponseWriter(conf.statusCode),
-		maxBodySize:   conf.maxBodySize,
-		logger:        conf.logger,
+		contextIdChan: conf.ContextIdChannel,
+		writer:        newResponseWriter(conf.DefaultResponseStatusCode),
+		maxBodySize:   conf.MaxIncomingBodySize,
+		logger:        conf.Logger,
 	}
 }
 
@@ -157,8 +158,8 @@ func newResponseWriter(statusCode int) *responseWriter {
 	}
 }
 
-// reset resets the context entity to default state.
-func (ctx *context) reset(w http.ResponseWriter, r *http.Request) {
+// Reset Resets the context entity to default state.
+func (ctx *context) Reset(w http.ResponseWriter, r *http.Request) {
 	ctx.ctx = ctxpkg.Background()
 	ctx.writer.w = w
 	ctx.request = r
@@ -170,13 +171,18 @@ func (ctx *context) reset(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// empty makes the http.Request and http.ResponseWrite <nil>.
+// Empty makes the http.Request and http.ResponseWrite <nil>.
 // Should be called before putting the Context back to the pool.
-func (c *context) empty() {
+func (c *context) Empty() {
 	c.discard()
 
 	c.request = nil
-	c.writer.empty()
+	c.writer.Empty()
+}
+
+// GetContextId returns the id of the context entity.
+func (c *context) GetContextId() uint64 {
+	return c.contextId
 }
 
 // GetRequest returns the attached http.Request pointer.
@@ -454,7 +460,7 @@ func (ctx *context) discard() {
 	reader.Close()
 }
 
-func (rw *responseWriter) empty() {
+func (rw *responseWriter) Empty() {
 	rw.b = rw.b[:0]
 	rw.header = http.Header{}
 	rw.statusCode = 0

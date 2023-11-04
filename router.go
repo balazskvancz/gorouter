@@ -13,6 +13,8 @@ import (
 )
 
 type Router interface {
+	ServeHTTP(http.ResponseWriter, *http.Request)
+
 	Serve(Context)
 	ListenWithContext(ctxpkg.Context)
 	Listen()
@@ -39,7 +41,7 @@ type (
 )
 
 const (
-	version string = "v1.0.4"
+	version string = "v1.1.0"
 
 	defaultAddress    int    = 8000
 	defaultServerName string = "goRouter"
@@ -83,7 +85,7 @@ type router struct {
 	ctx ctxpkg.Context
 
 	// Trees for all the registered endpoints.
-	// Every HTTP Method gets a different, by default empty
+	// Every HTTP Method gets a different, by default Empty
 	// tree, then stored in a map, where the key is the
 	// method itself.
 	methodTrees methodTree
@@ -93,7 +95,7 @@ type router struct {
 	// and after the initiation, we return it.
 	//
 	// NOTE: everytime we put one entity back to the pool, the caller
-	// must empty all the attached pointers, otherwise the GC won't be
+	// must Empty all the attached pointers, otherwise the GC won't be
 	// able to free space of memory.
 	contextPool sync.Pool
 
@@ -235,11 +237,11 @@ func New(opts ...routerOptionFunc) Router {
 
 	r.contextPool = sync.Pool{
 		New: func() any {
-			return newContext(contextConfig{
-				ciChan:      ctxIdChannel,
-				statusCode:  r.routerInfo.defaultResponseStatusCode,
-				maxBodySize: r.maxFormSize,
-				logger:      logger,
+			return NewContext(ContextConfig{
+				ContextIdChannel:          ctxIdChannel,
+				DefaultResponseStatusCode: r.routerInfo.defaultResponseStatusCode,
+				MaxIncomingBodySize:       r.maxFormSize,
+				Logger:                    logger,
 			})
 		},
 	}
@@ -359,7 +361,7 @@ func (r *router) Serve(ctx Context) {
 func (router *router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Get a context out of the pool.
 	ctx := router.contextPool.Get().(*context)
-	ctx.reset(w, r)
+	ctx.Reset(w, r)
 
 	router.Serve(ctx)
 
@@ -367,7 +369,7 @@ func (router *router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// If we didnt release the all the pointers, then the GC
 	// cant free the pointer until we call ctx.reset on
 	// the same pointer.
-	ctx.empty()
+	ctx.Empty()
 	router.contextPool.Put(ctx)
 }
 
