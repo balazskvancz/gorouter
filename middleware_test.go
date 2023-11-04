@@ -133,36 +133,44 @@ func TestDoesMatch(t *testing.T) {
 		{
 			name: "the middleware is matching if there is only one matcher which is matching",
 			getMiddleware: func() Middleware {
-				return NewMiddleware(mockMiddleware, func(_ Context) bool { return true })
+				matcher := MiddlewareWithMatchers(func(_ Context) bool { return true })
+
+				return NewMiddleware(mockMiddleware, matcher)
 			},
 			expectedIsMatching: true,
 		},
 		{
 			name: "the middleware is not matching if there is only one matcher which is not matching",
 			getMiddleware: func() Middleware {
-				return NewMiddleware(mockMiddleware, func(_ Context) bool { return false })
+				matcher := MiddlewareWithMatchers(func(_ Context) bool { return false })
+
+				return NewMiddleware(mockMiddleware, matcher)
 			},
 			expectedIsMatching: false,
 		},
 		{
 			name: "the middleware is matching if every matcher is matching",
 			getMiddleware: func() Middleware {
-				return NewMiddleware(mockMiddleware,
+				matchers := MiddlewareWithMatchers(
 					func(_ Context) bool { return true },
 					func(_ Context) bool { return true },
 					func(_ Context) bool { return true },
 				)
+
+				return NewMiddleware(mockMiddleware, matchers)
 			},
 			expectedIsMatching: true,
 		},
 		{
 			name: "the middleware is not matching if at least one matcher is not matching",
 			getMiddleware: func() Middleware {
-				return NewMiddleware(mockMiddleware,
+				matchers := MiddlewareWithMatchers(
 					func(_ Context) bool { return true },
 					func(_ Context) bool { return false },
 					func(_ Context) bool { return true },
 				)
+
+				return NewMiddleware(mockMiddleware, matchers)
 			},
 			expectedIsMatching: false,
 		},

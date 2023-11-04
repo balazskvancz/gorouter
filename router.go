@@ -41,7 +41,7 @@ type (
 )
 
 const (
-	version string = "v1.1.0"
+	version string = "v1.2.0"
 
 	defaultAddress    int    = 8000
 	defaultServerName string = "goRouter"
@@ -76,6 +76,9 @@ type routerInfo struct {
 	// If no response is written during the execution,
 	// then this code will be written to the response.
 	defaultResponseStatusCode int
+
+	//
+	areMiddlewaresEnabled bool
 }
 
 type router struct {
@@ -116,6 +119,9 @@ type router struct {
 
 	// Custom handler function for panics.
 	panicHandler PanicHandlerFunc
+
+	// A handler when the method tree is empty.
+	emptyTreeHandler HandlerFunc
 
 	// A custom function to read the body of the
 	// incoming request in advance.
@@ -201,6 +207,20 @@ func WithServerName(name string) routerOptionFunc {
 	}
 }
 
+// WithMiddlewaresEnabled allows to configure the state of the middlewares.
+func WithMiddlewaresEnabled(areEnabled bool) routerOptionFunc {
+	return func(r *router) {
+		r.routerInfo.areMiddlewaresEnabled = areEnabled
+	}
+}
+
+// WithEmptyTreeHandler allows to configure the handler in case of an empty method tree event.
+func WithEmptyTreeHandler(handler HandlerFunc) routerOptionFunc {
+	return func(r *router) {
+		r.emptyTreeHandler = handler
+	}
+}
+
 // New returns a new Router instance decorated
 // by the given optionFuncs.
 func New(opts ...routerOptionFunc) Router {
@@ -212,6 +232,7 @@ func New(opts ...routerOptionFunc) Router {
 			address:                   defaultAddress,
 			defaultResponseStatusCode: defaultStatusCode,
 			maxFormSize:               defaultMaxFormBodySize,
+			areMiddlewaresEnabled:     true, // By default every middleware are enabled.
 		},
 
 		// By deafult we simply use the Background context.
@@ -220,9 +241,10 @@ func New(opts ...routerOptionFunc) Router {
 		middlewares: make(middlewareRegistry, 0),
 		methodTrees: make(methodTree),
 
-		notFoundHandler: defaultNotFoundHandler,
-		optionsHandler:  nil,
-		panicHandler:    nil,
+		notFoundHandler:  defaultNotFoundHandler,
+		emptyTreeHandler: defaultEmptyTreeHandler,
+		optionsHandler:   nil,
+		panicHandler:     nil,
 
 		bodyReader: defaultBodyReader,
 	}
@@ -393,6 +415,10 @@ func (router *router) appendToMiddlewares(mType middlewareType, middlewares ...M
 func (router *router) filterMatchinMiddleware(ctx Context, mwType middlewareType) middlewares {
 	mm := make([]Middleware, 0)
 	for _, m := range router.middlewares[mwType] {
+		if !router.areMiddlewaresEnabled && !m.IsAlwaysAllowed() {
+			continue
+		}
+
 		if m.DoesMatch(ctx) {
 			mm = append(mm, m)
 		}
@@ -423,7 +449,7 @@ func (r *router) addRoute(method string, url string, handler HandlerFunc) Route 
 		return t
 	}()
 
-	route := newRoute(url, handler)
+	route := newRoute(url, handler, r)
 
 	if err := tree.Insert(url, route); err != nil {
 		r.logger.Error(err.Error())
@@ -435,6 +461,10 @@ func (r *router) addRoute(method string, url string, handler HandlerFunc) Route 
 
 func defaultNotFoundHandler(ctx Context) {
 	ctx.SendNotFound()
+}
+
+func defaultEmptyTreeHandler(ctx Context) {
+	ctx.SendMethodNotAllowed()
 }
 
 func defaultBodyReader(r *http.Request) []byte {
@@ -462,7 +492,7 @@ func (r *router) getHandler(ctx Context) HandlerFunc {
 	tree, ok := r.methodTrees[ctx.GetRequestMethod()]
 	if !ok {
 		return func(ctx Context) {
-			ctx.SendMethodNotAllowed()
+			r.emptyTreeHandler(ctx)
 		}
 	}
 
@@ -519,14 +549,19 @@ func (r *router) getBodyReaderMiddleware() Middleware {
 		next(ctx)
 	}
 
-	return NewMiddleware(mw, matcher)
+	return NewMiddleware(mw,
+		MiddlewareWithMatchers(matcher),
+		MiddlewareWithAlwaysAllowed(true),
+	)
 }
 
 func getWriterPostMiddleware() Middleware {
-	return NewMiddleware(func(ctx Context, next HandlerFunc) {
+	mw := func(ctx Context, next HandlerFunc) {
 		ctx.WriteToResponseNow()
 		next(ctx)
-	})
+	}
+
+	return NewMiddleware(mw, MiddlewareWithAlwaysAllowed(true))
 }
 
 func getLoggerMiddleware() Middleware {
@@ -536,5 +571,5 @@ func getLoggerMiddleware() Middleware {
 		next(ctx)
 	}
 
-	return NewMiddleware(mw)
+	return NewMiddleware(mw, MiddlewareWithAlwaysAllowed(true))
 }

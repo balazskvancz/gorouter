@@ -10,13 +10,15 @@ const (
 type MiddlewareMatcherFunc func(Context) bool
 
 type middleware struct {
-	matcher MiddlewareMatcherFunc
-	handler MiddlewareFunc
+	matcher         MiddlewareMatcherFunc
+	handler         MiddlewareFunc
+	isAlwaysAllowed bool
 }
 
 type Middleware interface {
 	DoesMatch(Context) bool
 	Execute(Context, HandlerFunc)
+	IsAlwaysAllowed() bool
 }
 
 type (
@@ -26,16 +28,17 @@ type (
 
 func defaultMatcher(_ Context) bool { return true }
 
-// NewMiddleware creates and returns a new middleware based
-// upon the given MiddlewareFunc and matchers.
-func NewMiddleware(handler MiddlewareFunc, matchers ...MiddlewareMatcherFunc) Middleware {
-	matcher := func() MiddlewareMatcherFunc {
+type MiddlewareOptionFunc func(*middleware)
+
+// MiddlewareWithMatchers allows to configure the matchers for a given middleware.
+func MiddlewareWithMatchers(matchers ...MiddlewareMatcherFunc) MiddlewareOptionFunc {
+	return func(m *middleware) {
 		// If there was no matcher given we use the default one.
 		if len(matchers) == 0 {
-			return defaultMatcher
+			return
 		}
 		// Otherwise it should be matching for ALL the given matchers.
-		return func(ctx Context) bool {
+		m.matcher = func(ctx Context) bool {
 			for _, matcher := range matchers {
 				if isMatching := matcher(ctx); !isMatching {
 					return false
@@ -43,12 +46,30 @@ func NewMiddleware(handler MiddlewareFunc, matchers ...MiddlewareMatcherFunc) Mi
 			}
 			return true
 		}
-	}()
-
-	return &middleware{
-		handler: handler,
-		matcher: matcher,
 	}
+}
+
+// MiddlewareWithAlwaysAllowed configures, whether a middleware should run
+// even if the middlewares are globally disallowed.
+func MiddlewareWithAlwaysAllowed(isAlwaysAllowed bool) MiddlewareOptionFunc {
+	return func(mw *middleware) {
+		mw.isAlwaysAllowed = isAlwaysAllowed
+	}
+}
+
+// NewMiddleware creates and returns a new middleware based
+// upon the given MiddlewareFunc and matchers.
+func NewMiddleware(handler MiddlewareFunc, opts ...MiddlewareOptionFunc) Middleware {
+	mw := &middleware{
+		handler: handler,
+		matcher: defaultMatcher,
+	}
+
+	for _, o := range opts {
+		o(mw)
+	}
+
+	return mw
 }
 
 var _ Middleware = (*middleware)(nil)
@@ -63,6 +84,12 @@ func (mw *middleware) DoesMatch(ctx Context) bool {
 // and the Handler as next to be called.
 func (mw *middleware) Execute(ctx Context, next HandlerFunc) {
 	mw.handler(ctx, next)
+}
+
+// IsAlwaysAllowed returns whether a certain middleware should run
+// even if the global middlewares are disabled.
+func (mw *middleware) IsAlwaysAllowed() bool {
+	return mw.isAlwaysAllowed
 }
 
 func (m middlewares) createChain(next HandlerFunc) HandlerFunc {

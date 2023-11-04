@@ -20,6 +20,7 @@ func removeQueryPart(url string) string {
 
 type route struct {
 	fullUrl string
+	router  *router
 
 	chain []HandlerFunc
 }
@@ -32,10 +33,11 @@ type Route interface {
 
 var _ Route = (*route)(nil)
 
-func newRoute(url string, fn HandlerFunc) *route {
+func newRoute(url string, fn HandlerFunc, r *router) *route {
 	return &route{
 		fullUrl: url,
 		chain:   []HandlerFunc{fn},
+		router:  r,
 	}
 }
 
@@ -45,6 +47,10 @@ func (route *route) registerMiddleware(mw MiddlewareFunc) *route {
 	}
 
 	if len(route.chain) == 0 {
+		return route
+	}
+
+	if !route.router.routerInfo.areMiddlewaresEnabled {
 		return route
 	}
 
