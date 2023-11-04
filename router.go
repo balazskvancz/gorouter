@@ -41,7 +41,7 @@ type (
 )
 
 const (
-	version string = "v1.2.0"
+	version string = "v1.2.1"
 
 	defaultAddress    int    = 8000
 	defaultServerName string = "goRouter"
@@ -268,6 +268,18 @@ func New(opts ...routerOptionFunc) Router {
 		},
 	}
 
+	// If it was not disabled during by the opts,
+	// then we append the middleware to preRunners.
+	if r.bodyReader != nil {
+		r.RegisterMiddlewares(r.getBodyReaderMiddleware())
+	}
+
+	// Registering the logger and writer middleware to the postrunners.
+	r.RegisterPostMiddlewares(
+		getWriterPostMiddleware(), // First we write the response to the connection,
+		getLoggerMiddleware(),     // then log write the log to stdout.
+	)
+
 	return r
 }
 
@@ -284,18 +296,6 @@ func (r *router) ListenWithContext(ctx ctxpkg.Context) {
 		Addr:    addr,
 		Handler: r,
 	}
-
-	// If it was not disabled during by the opts,
-	// then we append the middleware to preRunners.
-	if r.bodyReader != nil {
-		r.RegisterMiddlewares(r.getBodyReaderMiddleware())
-	}
-
-	// Registering the logger and writer middleware to the postrunners.
-	r.RegisterPostMiddlewares(
-		getWriterPostMiddleware(), // First we write the response to the connection,
-		getLoggerMiddleware(),     // then log write the log to stdout.
-	)
 
 	go func() {
 		if err := server.ListenAndServe(); err != nil {
@@ -409,6 +409,13 @@ func (router *router) appendToMiddlewares(mType middlewareType, middlewares ...M
 	if len(middlewares) == 0 {
 		return
 	}
+
+	if mType == MiddlewarePostRunner {
+		router.middlewares[mType] = append(middlewares, router.middlewares[mType]...)
+
+		return
+	}
+
 	router.middlewares[mType] = append(router.middlewares[mType], middlewares...)
 }
 
