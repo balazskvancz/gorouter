@@ -115,6 +115,7 @@ type Context interface {
 	WriteResponse(b []byte)
 	AppendHttpHeader(header http.Header)
 	WriteToResponseNow()
+	Copy(io.Reader)
 
 	GetLog() *contextLog
 }
@@ -438,6 +439,11 @@ func (ctx *context) AppendHttpHeader(header http.Header) {
 // WriteToResponseNow writes the actual response of context to the underlying connection.
 func (ctx *context) WriteToResponseNow() {
 	ctx.writer.writeToResponse()
+}
+
+// Copy copies the content of the given reader to the response writer.
+func (ctx *context) Copy(r io.Reader) {
+	ctx.writer.copy(r)
 }
 
 func (ctx *context) discard() {
