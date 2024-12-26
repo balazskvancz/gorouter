@@ -41,7 +41,7 @@ type (
 )
 
 const (
-	version string = "v1.2.2"
+	version string = "v2.0.0"
 
 	defaultAddress    int    = 8000
 	defaultServerName string = "goRouter"
@@ -356,6 +356,8 @@ func (r *router) Serve(ctx Context) {
 		defer func() {
 			if val := recover(); val != nil {
 				r.panicHandler(ctx, val)
+
+				ctx.Close()
 			}
 		}()
 	}
@@ -374,6 +376,8 @@ func (r *router) Serve(ctx Context) {
 	)
 	preChain(ctx)
 	postChain(ctx)
+
+	ctx.Close()
 }
 
 // ServeHTTP is the main entrypoint for every incoming HTTP requests.
@@ -564,7 +568,10 @@ func (r *router) getBodyReaderMiddleware() Middleware {
 
 func getWriterPostMiddleware() Middleware {
 	mw := func(ctx Context, next HandlerFunc) {
-		ctx.WriteToResponseNow()
+		if err := ctx.Flush(); err != nil {
+			fmt.Println(err)
+		}
+
 		next(ctx)
 	}
 

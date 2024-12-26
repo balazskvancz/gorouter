@@ -1,13 +1,13 @@
 package gorouter
 
 import (
-	"bytes"
 	ctxpkg "context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -51,17 +51,9 @@ type (
 	contextMap map[ContextKey]anyValue
 )
 
-type responseWriter struct {
-	defaultStatusCode int
-	statusCode        int
-	header            http.Header
-	b                 []byte
-
-	w http.ResponseWriter
-}
-
 type context struct {
 	ctx     ctxpkg.Context
+	conn    net.Conn
 	writer  *responseWriter
 	request *http.Request
 
@@ -82,6 +74,7 @@ type Context interface {
 	Reset(http.ResponseWriter, *http.Request)
 	Empty()
 	GetContextId() uint64
+	Close()
 
 	// ---- Request
 	GetRequest() *http.Request
@@ -114,7 +107,7 @@ type Context interface {
 	SetStatusCode(int)
 	WriteResponse(b []byte)
 	AppendHttpHeader(header http.Header)
-	WriteToResponseNow()
+	Flush() error
 	Copy(io.Reader)
 
 	GetLog() *contextLog
@@ -152,19 +145,20 @@ func NewContext(conf ContextConfig) *context {
 	}
 }
 
-func newResponseWriter(statusCode int) *responseWriter {
-	return &responseWriter{
-		defaultStatusCode: statusCode,
-		header:            http.Header{},
-	}
-}
-
 // Reset Resets the context entity to default state.
 func (ctx *context) Reset(w http.ResponseWriter, r *http.Request) {
+	conn, rw, err := w.(http.Hijacker).Hijack()
+	if err != nil {
+		// TODO:
+		fmt.Println(err)
+	}
+
 	ctx.ctx = ctxpkg.Background()
-	ctx.writer.w = w
+	ctx.writer.w = rw
+	ctx.writer.setVersion(r.Proto)
 	ctx.request = r
 	ctx.startTime = time.Now()
+	ctx.conn = conn
 
 	// We set the next id from the channel.
 	if ctx.contextIdChan != nil {
@@ -178,7 +172,16 @@ func (c *context) Empty() {
 	c.discard()
 
 	c.request = nil
+	c.conn = nil
 	c.writer.Empty()
+}
+
+func (c *context) Close() {
+	if c.conn != nil {
+		if err := c.conn.Close(); err != nil {
+			fmt.Println(err)
+		}
+	}
 }
 
 // GetContextId returns the id of the context entity.
@@ -290,7 +293,6 @@ func (ctx *context) GetParams() pathParams {
 	}
 	params, ok := bindedValue.(pathParams)
 	if !ok {
-		fmt.Println("not ok")
 		return map[string]string{}
 	}
 	return params
@@ -436,9 +438,9 @@ func (ctx *context) AppendHttpHeader(header http.Header) {
 	}
 }
 
-// WriteToResponseNow writes the actual response of context to the underlying connection.
-func (ctx *context) WriteToResponseNow() {
-	ctx.writer.writeToResponse()
+// Flush writes the actual response of context to the underlying connection.
+func (ctx *context) Flush() error {
+	return ctx.writer.flush()
 }
 
 // Copy copies the content of the given reader to the response writer.
@@ -464,62 +466,6 @@ func (ctx *context) discard() {
 		return
 	}
 	reader.Close()
-}
-
-func (rw *responseWriter) Empty() {
-	rw.b = rw.b[:0]
-	rw.header = http.Header{}
-	rw.statusCode = 0
-	rw.w = nil
-}
-
-func (rw *responseWriter) write(b []byte) {
-	rw.b = b
-}
-
-func (rw *responseWriter) setStatus(statusCode int) {
-	rw.statusCode = statusCode
-}
-
-func (rw *responseWriter) addHeader(key, value string) {
-	rw.header.Add(key, value)
-}
-
-func (rw *responseWriter) copy(r io.Reader) {
-	if rw == nil {
-		return
-	}
-	buff := &bytes.Buffer{}
-	if _, err := io.Copy(buff, r); err != nil {
-		fmt.Println(err)
-		return
-	}
-	rw.b = buff.Bytes()
-}
-
-func (rw *responseWriter) writeToResponse() {
-	if len(rw.b) == 0 && rw.statusCode >= http.StatusMultipleChoices {
-		http.Error(rw.w, http.StatusText(rw.statusCode), rw.statusCode)
-		return
-	}
-
-	for k, v := range rw.header {
-		value := strings.Join(v, ",")
-		rw.w.Header().Add(k, value)
-	}
-
-	finalStatusCode := func() int {
-		if rw.statusCode > 0 {
-			return rw.statusCode
-		}
-		if rw.defaultStatusCode > 0 {
-			return rw.defaultStatusCode
-		}
-		return defaultStatusCode
-	}()
-
-	rw.w.WriteHeader(finalStatusCode)
-	rw.w.Write(rw.b)
 }
 
 // FormFile.
