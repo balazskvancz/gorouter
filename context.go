@@ -82,18 +82,18 @@ type Context interface {
 	GetUrl() string
 	GetCleanedUrl() string
 	GetQueryParams() url.Values
-	GetQueryParam(string) string
+	GetQueryParam(key string) string
 	BindValue(ContextKey, any)
 	GetBindedValue(ContextKey) any
-	GetRequestHeader(string) string
+	GetRequestHeader(header string) string
 	GetContentType() string
-	GetParam(string) string
+	GetParam(param string) string
 	GetParams() pathParams
 	GetRequestHeaders() http.Header
-	GetBody() []byte
+	GetBody() io.ReadCloser
 	ParseForm() error
-	GetFormFile(string) (File, error)
-	GetFormValue(string) (string, error)
+	GetFormFile(key string) (File, error)
+	GetFormValue(key string) (string, error)
 
 	// ---- Response
 	SendJson(anyValue, ...int)
@@ -102,13 +102,11 @@ type Context interface {
 	SendMethodNotAllowed()
 	SendOk()
 	SendUnauthorized()
-	SendRaw([]byte, int, http.Header)
-	Pipe(*http.Response)
-	SetStatusCode(int)
-	WriteResponse(b []byte)
+	SendRaw(b []byte, code int, header http.Header)
+	Pipe(res *http.Response)
 	AppendHttpHeader(header http.Header)
 	Flush() error
-	Copy(io.Reader)
+	Copy(r io.Reader)
 
 	GetLog() *contextLog
 }
@@ -254,13 +252,10 @@ func (ctx *context) GetQueryParam(key string) string {
 	return query.Get(key)
 }
 
-// GetBody returns the body read from the incoming request.
-func (ctx *context) GetBody() []byte {
-	b, ok := ctx.GetBindedValue(incomingBodyKey).([]byte)
-	if !ok {
-		return nil
-	}
-	return b
+// GetBody returns the body of the incoming request.
+// Closing the body is the callers responsibility.
+func (ctx *context) GetBody() io.ReadCloser {
+	return ctx.request.Body
 }
 
 // GetRequestHeaders returns all the headers from the request.
@@ -342,46 +337,29 @@ func (ctx *context) GetFormFile(key string) (File, error) {
 
 // SendRaw writes the given slice of bytes, statusCode and header to the response.
 func (ctx *context) SendRaw(b []byte, statusCode int, header http.Header) {
-	ctx.WriteResponse(b)
-	ctx.SetStatusCode(statusCode)
-	ctx.AppendHttpHeader(header)
-}
-
-// WriteResponse writes the given slice of bytes to the response.
-func (ctx *context) WriteResponse(b []byte) {
 	ctx.writer.write(b)
-}
-
-// SetStatusCode sets the statusCode for the response.
-func (ctx *context) SetStatusCode(statusCode int) {
-	ctx.writer.setStatus(statusCode)
+	ctx.setStatusCode(statusCode)
+	ctx.AppendHttpHeader(header)
 }
 
 // SendsJson send a JSON response to client.
 func (ctx *context) SendJson(data anyValue, code ...int) {
-	statusCode := func() int {
-		if len(code) > 0 {
-			return code[0]
-		}
-		return http.StatusOK
-	}()
-
-	b, err := json.Marshal(data)
-	if err != nil {
-		fmt.Printf("marshal err: %v\n", err)
+	if err := json.NewEncoder(ctx.writer.buff).Encode(data); err != nil {
+		ctx.Error("[SendJson error]: %v\n", err)
 
 		return
 	}
 
-	ctx.SendRaw(b, statusCode, createContentTypeHeader(JsonContentTypeUTF8))
-}
+	statusCode := http.StatusOK
+	if len(code) > 0 {
+		statusCode = code[0]
+	}
 
-func createContentTypeHeader(ct string) http.Header {
-	header := http.Header{}
+	ctx.setStatusCode(statusCode)
 
-	header.Add(ctHeader, ct)
-
-	return header
+	ctx.AppendHttpHeader(http.Header{
+		"Content-Type": []string{JsonContentTypeUTF8},
+	})
 }
 
 // SendOk send a s basic HTTP 200 response.
@@ -417,7 +395,7 @@ func (ctx *context) SendUnavailable() {
 // SendHttpError send HTTP error with the given code.
 // It also write the statusText inside the body, based on the code.
 func (ctx *context) SendHttpError(statusCode int) {
-	ctx.SetStatusCode(statusCode)
+	ctx.setStatusCode(statusCode)
 }
 
 // Pipe writes the given repsonse's body, statusCode and headers to the Context's response.
@@ -427,7 +405,7 @@ func (ctx *context) Pipe(res *http.Response) {
 	// r := io.TeeReader(res.Body, ctx.writer)
 	ctx.writer.copy(res.Body)
 	ctx.AppendHttpHeader(res.Header)
-	ctx.SetStatusCode(res.StatusCode)
+	ctx.setStatusCode(res.StatusCode)
 }
 
 // AppendHttpHeader appends all the key-value pairs from the given
@@ -537,4 +515,17 @@ func (ctx *context) GetLog() *contextLog {
 
 func (cl *contextLog) Serialize() string {
 	return fmt.Sprintf("[%s]\t%s\t%d\t%dms", cl.method, cl.url, cl.code, cl.elapsedTime)
+}
+
+func (ctx *context) setStatusCode(statusCode int) {
+	if !isValidStatusCode(statusCode) {
+		ctx.Warning(
+			"[SetStatusCode]: given %d is invalid HTTP status code; instead the the fallback (%d) is used\n",
+			statusCode, ctx.writer.defaultStatusCode,
+		)
+
+		return
+	}
+
+	ctx.writer.setStatus(statusCode)
 }

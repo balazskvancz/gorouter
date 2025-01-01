@@ -15,8 +15,6 @@ type httpVersion = string
 const (
 	version10 httpVersion = "HTTP/1.0"
 	version11 httpVersion = "HTTP/1.1"
-
-	asciOffset int = 48
 )
 
 type responseWriter struct {
@@ -81,26 +79,19 @@ func (rw *responseWriter) flush() error {
 		return err
 	}
 
-	// Maybe a rw.buff.Reset() should be called here.
-
 	return rw.w.Flush()
 }
 
 func createStatusLine(httpVersion httpVersion, statusCode int) *bytes.Buffer {
 	var (
-		statusText = http.StatusText(statusCode)
-		buff       = &bytes.Buffer{}
-	)
-
-	var (
-		firstDigit  = (statusCode / 100) + asciOffset
-		secondDigit = ((statusCode / 10) % 10) + asciOffset
-		thirdDigit  = (statusCode % 10) + asciOffset
+		statusText      = http.StatusText(statusCode)
+		buff            = &bytes.Buffer{}
+		statusCodeBytes = numIntoByteSlice(statusCode)
 	)
 
 	buff.Write([]byte(httpVersion))
 	buff.WriteRune(' ')
-	buff.Write([]byte{byte(firstDigit), byte(secondDigit), byte(thirdDigit)})
+	buff.Write(statusCodeBytes)
 	buff.WriteRune(' ')
 	buff.Write([]byte(statusText))
 	buff.Write(crlf)
@@ -119,6 +110,12 @@ func (rw *responseWriter) createResponseHeaders() *bytes.Buffer {
 	if val := rw.header.Get("Date"); val == "" {
 		b.Write([]byte("Date: "))
 		b.WriteString(time.Now().UTC().Format("Mon, 02 Jan 2006 15:04:05 GMT"))
+		b.Write(crlf)
+	}
+
+	if rw.buff != nil && rw.header.Get("Content-Length") == "" {
+		b.Write([]byte("Content-Length: "))
+		b.Write(numIntoByteSlice(rw.buff.Len()))
 		b.Write(crlf)
 	}
 

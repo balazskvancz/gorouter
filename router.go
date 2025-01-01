@@ -3,11 +3,9 @@ package gorouter
 import (
 	ctxpkg "context"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"sync"
 	"syscall"
 )
@@ -36,8 +34,6 @@ type (
 	PanicHandlerFunc func(Context, interface{})
 
 	routerOptionFunc func(*router)
-
-	bodyReaderFn func(*http.Request) []byte
 )
 
 const (
@@ -45,21 +41,6 @@ const (
 
 	defaultAddress    int    = 8000
 	defaultServerName string = "goRouter"
-)
-
-var (
-	// The automatic reading of the incoming postData – if it is enabled –
-	// is only done, if the method of the incoming request is one these methods.
-	couldReadBody []string = []string{http.MethodPost, http.MethodPut}
-
-	// Also connects to body reading. If the content type of
-	// the incoming request is one of the listed types,
-	// then the automatic reading is not perfomed.
-	// Note that, in case of this inspection we look for substring match
-	// not for exact match.
-	// For now, only the multipart/form-data content type is not read
-	// by default, maybe should change it automatic parseing instead of reading.
-	exceptionContentTypes []string = []string{MultiPartFormContentType}
 )
 
 type routerInfo struct {
@@ -77,7 +58,6 @@ type routerInfo struct {
 	// then this code will be written to the response.
 	defaultResponseStatusCode int
 
-	//
 	areMiddlewaresEnabled bool
 }
 
@@ -96,10 +76,6 @@ type router struct {
 	// Instead of creating a new Context for each incoming request
 	// we use this pool to acquire an already initiated entity,
 	// and after the initiation, we return it.
-	//
-	// NOTE: everytime we put one entity back to the pool, the caller
-	// must Empty all the attached pointers, otherwise the GC won't be
-	// able to free space of memory.
 	contextPool sync.Pool
 
 	// The registry for all the globally registered middlwares.
@@ -114,7 +90,7 @@ type router struct {
 	// By default, there a default notFoundHandler, which sends 404 in header.
 	notFoundHandler HandlerFunc
 
-	// Custom handler for HTTP OPTIONS.
+	// Custom handler for method OPTIONS.
 	optionsHandler HandlerFunc
 
 	// Custom handler function for panics.
@@ -122,10 +98,6 @@ type router struct {
 
 	// A handler when the method tree is empty.
 	emptyTreeHandler HandlerFunc
-
-	// A custom function to read the body of the
-	// incoming request in advance.
-	bodyReader bodyReaderFn
 
 	logger Logger
 }
@@ -192,14 +164,6 @@ func WithPanicHandler(h PanicHandlerFunc) routerOptionFunc {
 	}
 }
 
-// WithBodyReader allows to configure a default body reader function
-// or disable it (by passing in <nil>).
-func WithBodyReader(reader bodyReaderFn) routerOptionFunc {
-	return func(r *router) {
-		r.bodyReader = reader
-	}
-}
-
 // WithServerName allows to configure the server name of the instance.
 func WithServerName(name string) routerOptionFunc {
 	return func(r *router) {
@@ -245,8 +209,6 @@ func New(opts ...routerOptionFunc) Router {
 		emptyTreeHandler: defaultEmptyTreeHandler,
 		optionsHandler:   nil,
 		panicHandler:     nil,
-
-		bodyReader: defaultBodyReader,
 	}
 
 	for _, o := range opts {
@@ -269,10 +231,6 @@ func New(opts ...routerOptionFunc) Router {
 	}
 
 	// If it was not disabled during by the opts,
-	// then we append the middleware to preRunners.
-	if r.bodyReader != nil {
-		r.RegisterMiddlewares(r.getBodyReaderMiddleware())
-	}
 
 	// Registering the logger and writer middleware to the postrunners.
 	r.RegisterPostMiddlewares(
@@ -478,19 +436,6 @@ func defaultEmptyTreeHandler(ctx Context) {
 	ctx.SendMethodNotAllowed()
 }
 
-func defaultBodyReader(r *http.Request) []byte {
-	if r == nil {
-		return nil
-	}
-	defer r.Body.Close()
-
-	b, err := io.ReadAll(r.Body)
-	if err != nil {
-		return nil
-	}
-	return b
-}
-
 func (r *router) getHandler(ctx Context) HandlerFunc {
 	// In case of HTTP OPTIONS, we use preregistered handler.
 	if ctx.GetRequestMethod() == http.MethodOptions {
@@ -533,43 +478,10 @@ func (r *router) getHandler(ctx Context) HandlerFunc {
 	return route.execute
 }
 
-func (r *router) getBodyReaderMiddleware() Middleware {
-	var matcher = func(ctx Context) bool {
-		if r.bodyReader == nil {
-			return false
-		}
-		// If the content type of the request
-		// is forbidden to read from eg. multipart/form-data
-		// then this matcher should return false.
-		contentType := ctx.GetContentType()
-		for _, ct := range exceptionContentTypes {
-			if strings.Contains(contentType, ct) {
-				return false
-			}
-		}
-		for _, e := range couldReadBody {
-			if e == ctx.GetRequestMethod() {
-				return true
-			}
-		}
-		return false
-	}
-
-	var mw = func(ctx Context, next HandlerFunc) {
-		ctx.BindValue(incomingBodyKey, r.bodyReader(ctx.GetRequest()))
-		next(ctx)
-	}
-
-	return NewMiddleware(mw,
-		MiddlewareWithMatchers(matcher),
-		MiddlewareWithAlwaysAllowed(true),
-	)
-}
-
 func getWriterPostMiddleware() Middleware {
 	mw := func(ctx Context, next HandlerFunc) {
 		if err := ctx.Flush(); err != nil {
-			fmt.Println(err)
+			ctx.Error("Flush error: %v", err)
 		}
 
 		next(ctx)
