@@ -30,7 +30,6 @@ type Router interface {
 }
 
 type (
-	methodTree       map[string]*tree
 	HandlerFunc      func(Context)
 	MiddlewareFunc   func(Context, HandlerFunc)
 	PanicHandlerFunc func(Context, interface{})
@@ -41,7 +40,7 @@ type (
 )
 
 const (
-	version string = "v1.2.2"
+	version string = "v1.3.0"
 
 	defaultAddress    int    = 8000
 	defaultServerName string = "goRouter"
@@ -87,11 +86,8 @@ type router struct {
 	// The base running context of the router, use it for cancellation.
 	ctx ctxpkg.Context
 
-	// Trees for all the registered endpoints.
-	// Every HTTP Method gets a different, by default Empty
-	// tree, then stored in a map, where the key is the
-	// method itself.
-	methodTrees methodTree
+	// Tree for all the registered endpoints.
+	endpointTree *node
 
 	// Instead of creating a new Context for each incoming request
 	// we use this pool to acquire an already initiated entity,
@@ -238,8 +234,8 @@ func New(opts ...routerOptionFunc) Router {
 		// By deafult we simply use the Background context.
 		ctx: ctxpkg.Background(),
 
-		middlewares: make(middlewareRegistry, 0),
-		methodTrees: make(methodTree),
+		middlewares:  make(middlewareRegistry, 0),
+		endpointTree: newNode(),
 
 		notFoundHandler:  defaultNotFoundHandler,
 		emptyTreeHandler: defaultEmptyTreeHandler,
@@ -446,19 +442,9 @@ func getContextIdChan() contextIdChan {
 }
 
 func (r *router) addRoute(method string, url string, handler HandlerFunc) Route {
-	// Get the associated tree OR create one.
-	tree := func() *tree {
-		if t, ok := r.methodTrees[method]; ok {
-			return t
-		}
-		t := newTree()
-		r.methodTrees[method] = t
-		return t
-	}()
-
 	route := newRoute(url, handler, r)
 
-	if err := tree.Insert(url, route); err != nil {
+	if err := r.endpointTree.insert(method, url, route); err != nil {
 		r.logger.Error(err.Error())
 		return nil
 	}
@@ -488,44 +474,22 @@ func defaultBodyReader(r *http.Request) []byte {
 }
 
 func (r *router) getHandler(ctx Context) HandlerFunc {
+	m := ctx.GetRequestMethod()
 	// In case of HTTP OPTIONS, we use preregistered handler.
-	if ctx.GetRequestMethod() == http.MethodOptions {
+	if m == http.MethodOptions {
 		if r.optionsHandler != nil {
 			return r.optionsHandler
 		}
 		return func(_ Context) {}
 	}
 
-	tree, ok := r.methodTrees[ctx.GetRequestMethod()]
-	if !ok {
-		return func(ctx Context) {
-			r.emptyTreeHandler(ctx)
-		}
+	route, params := r.endpointTree.find(m, ctx.GetCleanedUrl())
+	if route == nil {
+		return r.notFoundHandler
 	}
 
-	routeNode := tree.Find(ctx.GetCleanedUrl())
-	if routeNode == nil {
-		if r.notFoundHandler != nil {
-			return r.notFoundHandler
-		}
-		return func(_ Context) {}
-	}
+	ctx.BindValue(routeParamsKey, params)
 
-	var (
-		params = routeNode.GetParams()
-		route  = routeNode.GetValue()
-	)
-
-	// We bind the matched params to the Context with
-	// the predefined key. NOTE: do not use it anywhere else!
-	if len(params) > 0 {
-		p := make(pathParams, len(params))
-		for k, v := range params {
-			p[k] = v
-		}
-
-		ctx.BindValue(routeParamsKey, p)
-	}
 	return route.execute
 }
 
