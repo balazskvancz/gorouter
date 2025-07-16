@@ -169,7 +169,10 @@ func TestGetMatchingOffsets(t *testing.T) {
 			}
 		})
 	}
+}
 
+type mockRoute struct {
+	Route
 }
 
 func TestInsert(t *testing.T) {
@@ -180,10 +183,6 @@ func TestInsert(t *testing.T) {
 		url     string
 		route   Route
 		err     error
-	}
-
-	type mockRoute struct {
-		Route
 	}
 
 	tt := []testCase{
@@ -306,9 +305,21 @@ func TestFind(t *testing.T) {
 		url            string
 		expectedRoute  Route
 		expectedParams pathParams
+		expectedError  error
 	}
 
 	tt := []testCase{
+		{
+			name: "the function returns error in case of invalid method",
+			getTree: func(*testing.T) *node {
+				return newNode()
+			},
+			method:         "bad",
+			url:            "/api",
+			expectedRoute:  nil,
+			expectedParams: nil,
+			expectedError:  errInvalidMethod,
+		},
 		{
 			name: "the function returns nil in case of empty tree",
 			getTree: func(*testing.T) *node {
@@ -318,6 +329,7 @@ func TestFind(t *testing.T) {
 			url:            "/api",
 			expectedRoute:  nil,
 			expectedParams: nil,
+			expectedError:  nil,
 		},
 		{
 			name: "the function returns the only node, in case of matching",
@@ -334,9 +346,10 @@ func TestFind(t *testing.T) {
 			url:            "/api",
 			expectedRoute:  mockRoute1,
 			expectedParams: make(pathParams),
+			expectedError:  nil,
 		},
 		{
-			name: "the function returns nil, if the found route is registered with different method",
+			name: "the function returns error, if the found route is registered with different method",
 			getTree: func(t *testing.T) *node {
 				n := newNode()
 
@@ -350,6 +363,7 @@ func TestFind(t *testing.T) {
 			url:            "/api",
 			expectedRoute:  nil,
 			expectedParams: nil,
+			expectedError:  nil,
 		},
 		{
 			name: "the function returns the queried node, without wildcard parameters #1",
@@ -386,6 +400,7 @@ func TestFind(t *testing.T) {
 			url:            "/api/foo/baz",
 			expectedRoute:  mockRoute3,
 			expectedParams: make(pathParams),
+			expectedError:  nil,
 		},
 		{
 			name: "the function returns the queried node, without wildcard parameters #2",
@@ -426,6 +441,7 @@ func TestFind(t *testing.T) {
 			url:            "/",
 			expectedRoute:  mockRoute1,
 			expectedParams: make(pathParams),
+			expectedError:  nil,
 		},
 		{
 			name: "the function returns the queried node, with wildcard parameter #1",
@@ -472,6 +488,7 @@ func TestFind(t *testing.T) {
 			expectedParams: pathParams{
 				"test": "mock-test",
 			},
+			expectedError: nil,
 		},
 		{
 			name: "the function returns the queried node, with wildcard parameter #2",
@@ -523,6 +540,7 @@ func TestFind(t *testing.T) {
 				"test":   "mock-test",
 				"second": "mock-test-2",
 			},
+			expectedError: nil,
 		},
 		{
 			name: "the function returns the queried node in favor of exact match #1",
@@ -542,6 +560,7 @@ func TestFind(t *testing.T) {
 			url:            "/api/exact",
 			expectedRoute:  mockRoute2,
 			expectedParams: make(pathParams),
+			expectedError:  nil,
 		},
 		{
 			name: "the function returns the queried node in favor of exact match #2",
@@ -561,6 +580,7 @@ func TestFind(t *testing.T) {
 			url:            "/api/exact",
 			expectedRoute:  mockRoute2,
 			expectedParams: make(pathParams),
+			expectedError:  nil,
 		},
 	}
 
@@ -568,7 +588,7 @@ func TestFind(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			tree := tc.getTree(t)
 
-			route, params := tree.find(tc.method, tc.url)
+			route, params, err := tree.find(tc.method, tc.url)
 
 			if !reflect.DeepEqual(route, tc.expectedRoute) {
 				t.Errorf("expected route missmatched")
@@ -581,6 +601,35 @@ func TestFind(t *testing.T) {
 				fmt.Printf("expected params: %v\n", tc.expectedParams)
 				fmt.Printf("got params: %v\n", params)
 			}
+
+			if !errors.Is(err, tc.expectedError) {
+				t.Errorf("expected error: %v; got error: %v\n", tc.expectedError, err)
+			}
 		})
+	}
+}
+
+func BenchmarkFind(b *testing.B) {
+	var (
+		tree = newNode()
+
+		h1 = mockRoute{}
+		h2 = mockRoute{}
+		h3 = mockRoute{}
+	)
+
+	tree.insert(http.MethodPost, "/api/foo", h1)
+	tree.insert(http.MethodGet, "/api/foo", h2)
+	tree.insert(http.MethodPost, "/api/{id}/{action}", h2)
+	tree.insert(http.MethodPost, "/api/{id}/{action}/{date}", h3)
+	tree.insert(http.MethodPost, "/api/bar", h3)
+	tree.insert(http.MethodGet, "/api/bar", h1)
+	tree.insert(http.MethodPost, "/api/bar/baz", h2)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for b.Loop() {
+		tree.find(http.MethodPost, "/api/1/delete/2025")
 	}
 }

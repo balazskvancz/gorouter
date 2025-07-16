@@ -3,14 +3,17 @@ package gorouter
 
 import (
 	"errors"
+	"net/http"
 	"strings"
 )
 
 var (
-	errMalformedParam   error = errors.New("malformed param: usage {param-key}")
-	errMalformedUrl     error = errors.New("malformed url: urls must start with /")
-	errEmptyUrl         error = errors.New("empty url was provided")
-	errUrlAlreadyStored error = errors.New("the given URL is already stored with the same method")
+	errMalformedParam    error = errors.New("malformed param: usage {param-key}")
+	errMalformedUrl      error = errors.New("malformed url: urls must start with /")
+	errEmptyUrl          error = errors.New("empty url was provided")
+	errUrlAlreadyStored  error = errors.New("the given URL is already stored with the same method")
+	errInvalidMethod     error = errors.New("invalid HTTP method")
+	errUnsupportedMethod error = errors.New("method not supported")
 
 	paramStart       string = "{"
 	paramEnd         string = "}"
@@ -32,6 +35,32 @@ type nodeValue struct {
 	route  Route
 }
 
+type methodValue = uint16
+
+const (
+	GetMethodValue methodValue = 1 << iota
+	HeadMethodValue
+	PostMethodValue
+	PutMethodValue
+	PatchMethodValue
+	DeleteMethodValue
+	ConnectMethodValue
+	OptionsMethodValue
+	TraceMethodValue
+)
+
+var methodMap = map[string]methodValue{
+	http.MethodGet:     GetMethodValue,
+	http.MethodHead:    HeadMethodValue,
+	http.MethodPost:    PostMethodValue,
+	http.MethodPut:     PutMethodValue,
+	http.MethodPatch:   PatchMethodValue,
+	http.MethodDelete:  DeleteMethodValue,
+	http.MethodConnect: ConnectMethodValue,
+	http.MethodOptions: OptionsMethodValue,
+	http.MethodTrace:   TraceMethodValue,
+}
+
 type node struct {
 	// The stored part of the URL.
 	part string
@@ -44,22 +73,20 @@ type node struct {
 	// iterations needed during the lookup.
 	children []*node
 
-	// TODO:
-	//
-	// Should use a uint for representing the all the methods, that
-	// are registered in the subtree, by bitwise operator.
+	// Represents all the methods, that are registered in the subtree, by bitwise operator.
 	//
 	// eg.:
 	// methodGet  => 1
-	// methodPost => 2
-	// methodPut  => 4
+	// methodHead => 2
+	// methodPost => 4
 	//
 	// If a subtree only stores endpoints registered with methodGet,
 	// then the parent should hold the value 1. If another subtree
-	// has endpoints registered with methodPost and with methodPut,
+	// has endpoints registered with methodPost and with methodHead,
 	// then the stored value should be 2 | 4 = 6.
 	//
-	// This would also reduce the lookup efficiency.
+	// This also reduces the lookup efficiency.
+	methods uint16
 }
 
 type foundNode struct {
@@ -174,7 +201,30 @@ func newNode() *node {
 	}
 }
 
+type edge struct {
+	parentEdge *edge
+	node       *node
+}
+
+func setMethodsRec(e *edge, methodValue uint16) {
+	if e == nil {
+		return
+	}
+	if (e.node.methods & methodValue) > 0 {
+		return
+	}
+
+	e.node.methods |= methodValue
+
+	setMethodsRec(e.parentEdge, methodValue)
+}
+
 func (n *node) insert(method string, url string, route Route) error {
+	methodValue, valid := methodMap[method]
+	if !valid {
+		return errInvalidMethod
+	}
+
 	insertUrl, params, err := normalizeUrl(url)
 	if err != nil {
 		return err
@@ -183,6 +233,7 @@ func (n *node) insert(method string, url string, route Route) error {
 	// In case of an empty tree, the root should store the value.
 	if n.part == "" {
 		n.part = insertUrl
+		n.methods = methodValue
 
 		n.values[method] = &nodeValue{
 			params: params,
@@ -193,18 +244,21 @@ func (n *node) insert(method string, url string, route Route) error {
 	}
 
 	var (
+		rootEdge = &edge{parentEdge: nil, node: n}
+
 		// Holds the pointer to the node, where have to insert the new node.
-		parentCandidate *node = n
-		// Holds the nodes to check iteratively.
-		nodes = []*node{n}
+		parentCandidate *edge = rootEdge
+		// Holds the edges to check iteratively.
+		edges = []*edge{rootEdge}
 		// Keeps track of the current part the insertable URL.
 		searchUrl = insertUrl
 	)
 
-	for i := 0; i < len(nodes); i++ {
+	for i := 0; i < len(edges); i++ {
 		var (
-			currNode = nodes[i]
-			lcp      = longestCommonPrefix(currNode.part, searchUrl)
+			currEdge = edges[i]
+
+			lcp = longestCommonPrefix(currEdge.node.part, searchUrl)
 		)
 
 		// If there is no common prefix in this subtree,
@@ -215,8 +269,8 @@ func (n *node) insert(method string, url string, route Route) error {
 
 		// If the remaining the the URL equals
 		// the to currently holded value, then we found the candidate.
-		if searchUrl == currNode.part {
-			parentCandidate = currNode
+		if searchUrl == currEdge.node.part {
+			parentCandidate = currEdge
 			searchUrl = ""
 
 			break
@@ -226,30 +280,34 @@ func (n *node) insert(method string, url string, route Route) error {
 		// the lcp, then we found the subtree, where
 		// the search must be continued with
 		// the remaining part the original URL.
-		if len(currNode.part) == lcp {
-			parentCandidate = currNode
+		if len(currEdge.node.part) == lcp {
+			parentCandidate = currEdge
 			searchUrl = searchUrl[lcp:]
-			nodes = append(nodes, currNode.children...)
+
+			for _, e := range currEdge.node.children {
+				edges = append(edges, &edge{parentEdge: currEdge, node: e})
+			}
 
 			continue
 		}
 
 		// Otherwise a key splitting action must be carried out,
 		// the parent candidate node should be the newly created one.
-		newKey := currNode.part[:lcp]
+		newKey := currEdge.node.part[:lcp]
 
 		newChildNode := &node{
-			part:     currNode.part[lcp:],
-			values:   currNode.values,
-			children: currNode.children,
+			part:     currEdge.node.part[lcp:],
+			values:   currEdge.node.values,
+			children: currEdge.node.children,
+			methods:  currEdge.node.methods,
 		}
 
-		currNode.part = newKey
-		currNode.children = []*node{newChildNode}
-		currNode.values = make(map[string]*nodeValue)
+		currEdge.node.part = newKey
+		currEdge.node.children = []*node{newChildNode}
+		currEdge.node.values = make(map[string]*nodeValue)
 		searchUrl = searchUrl[lcp:]
 
-		parentCandidate = currNode
+		parentCandidate = currEdge
 	}
 
 	// An empty URL indicates, that there is no need to
@@ -257,22 +315,25 @@ func (n *node) insert(method string, url string, route Route) error {
 	// Insertion must be carried out, unless the given method
 	// has been already associated with an other handler.
 	if searchUrl == "" {
-		if _, exists := parentCandidate.values[method]; exists {
+		if _, exists := parentCandidate.node.values[method]; exists {
 			return errUrlAlreadyStored
 		}
 
-		parentCandidate.values[method] = &nodeValue{
+		parentCandidate.node.values[method] = &nodeValue{
 			params: params,
 			route:  route,
 		}
+
+		setMethodsRec(parentCandidate, methodValue)
 
 		return nil
 	}
 
 	// Otherwise, a new node should be created with remaining URL part
 	// and inserted into the parent candidate's children,
-	parentCandidate.children = append(parentCandidate.children, &node{
-		part: searchUrl,
+	newNode := &node{
+		part:    searchUrl,
+		methods: methodValue,
 		values: map[string]*nodeValue{
 			method: &nodeValue{
 				params: params,
@@ -280,12 +341,24 @@ func (n *node) insert(method string, url string, route Route) error {
 			},
 		},
 		children: make([]*node, 0),
-	})
+	}
+
+	parentCandidate.node.children = append(parentCandidate.node.children, newNode)
+
+	setMethodsRec(&edge{
+		parentEdge: parentCandidate,
+		node:       newNode,
+	}, methodValue)
 
 	return nil
 }
 
-func (n *node) find(method string, url string) (Route, pathParams) {
+func (n *node) find(method string, url string) (Route, pathParams, error) {
+	methodValue, valid := methodMap[method]
+	if !valid {
+		return nil, nil, errInvalidMethod
+	}
+
 	var (
 		nodes     = []*node{n}
 		searchUrl = url
@@ -294,12 +367,13 @@ func (n *node) find(method string, url string) (Route, pathParams) {
 	)
 
 	for i := 0; i < len(nodes); i++ {
-		var (
-			currNode = nodes[i]
+		currNode := nodes[i]
+		if (currNode.methods & methodValue) == 0 {
+			continue
+		}
 
-			// Determines how many characters are matching, despite named parameters.
-			offset1, offset2, includesWildcard = getMatchingOffsets(currNode.part, searchUrl)
-		)
+		// Determines how many characters are matching, despite named parameters.
+		offset1, offset2, includesWildcard := getMatchingOffsets(currNode.part, searchUrl)
 
 		if offset1 != len(currNode.part) {
 			continue
@@ -327,13 +401,13 @@ func (n *node) find(method string, url string) (Route, pathParams) {
 	}
 
 	if foundNode == nil || foundNode.values == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	// The node does not support the asked method.
 	v := foundNode.values[method]
 	if v == nil {
-		return nil, nil
+		return nil, nil, errUnsupportedMethod
 	}
 
 	params := make(pathParams)
@@ -345,7 +419,7 @@ func (n *node) find(method string, url string) (Route, pathParams) {
 		}
 	}
 
-	return v.route, params
+	return v.route, params, nil
 }
 
 /** DEBUG */
@@ -354,7 +428,7 @@ func (n *node) find(method string, url string) (Route, pathParams) {
 // }
 
 // func dfs(n *node, lvl int) {
-// fmt.Printf("level: %d, stored value: %s\n", lvl, n.part)
+// fmt.Printf("level: %d, stored value: %s, methods: %d\n", lvl, n.part, n.methods)
 // for _, c := range n.children {
 // dfs(c, lvl+1)
 // }

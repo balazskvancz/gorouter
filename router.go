@@ -483,7 +483,8 @@ func (r *router) getHandler(ctx Context) HandlerFunc {
 		return func(_ Context) {}
 	}
 
-	route, params := r.endpointTree.find(m, ctx.GetCleanedUrl())
+	// WIP
+	route, params, _ := r.endpointTree.find(m, ctx.GetCleanedUrl())
 	if route == nil {
 		return r.notFoundHandler
 	}
