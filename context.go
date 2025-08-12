@@ -97,25 +97,22 @@ type Context interface {
 	GetParam(string) string
 	GetParams() pathParams
 	GetRequestHeaders() http.Header
-	GetBody() []byte
+	GetBody() io.ReadCloser
 	ParseForm() error
 	GetFormFile(string) (File, error)
 	GetFormValue(string) (string, error)
 
 	// ---- Response
 	SendJson(anyValue, ...int)
-	SendNotFound()
-	SendInternalServerError()
-	SendMethodNotAllowed()
-	SendOk()
-	SendUnauthorized()
 	SendRaw([]byte, int, http.Header)
 	Pipe(*http.Response)
 	SetStatusCode(int)
 	WriteResponse(b []byte)
 	AppendHttpHeader(header http.Header)
-	WriteToResponseNow()
+	Flush()
 	Copy(io.Reader)
+
+	Status(code int)
 
 	GetLog() *contextLog
 }
@@ -251,13 +248,9 @@ func (ctx *context) GetQueryParam(key string) string {
 	return query.Get(key)
 }
 
-// GetBody returns the body read from the incoming request.
-func (ctx *context) GetBody() []byte {
-	b, ok := ctx.GetBindedValue(incomingBodyKey).([]byte)
-	if !ok {
-		return nil
-	}
-	return b
+// GetBody returns the body of the incoming request.
+func (ctx *context) GetBody() io.ReadCloser {
+	return ctx.request.Body
 }
 
 // GetRequestHeaders returns all the headers from the request.
@@ -387,29 +380,9 @@ func (ctx *context) SendOk() {
 	ctx.SendRaw(nil, http.StatusOK, http.Header{})
 }
 
-// SendNotFound sends a HTTP 404 error.
-func (ctx *context) SendNotFound() {
-	ctx.SendHttpError(http.StatusNotFound)
-}
-
-// SendMethodNotAllowed sends a HTTP 405 error.
-func (ctx *context) SendMethodNotAllowed() {
-	ctx.SendHttpError(http.StatusMethodNotAllowed)
-}
-
-// SendUnauthorized send a HTTP 401 error.
-func (ctx *context) SendUnauthorized() {
-	ctx.SendHttpError(http.StatusUnauthorized)
-}
-
-// SendInternalServerError send a HTTP 500 error.
-func (ctx *context) SendInternalServerError() {
-	ctx.SendHttpError(http.StatusInternalServerError)
-}
-
-// SendUnavailable send a HTTP 503 error.
-func (ctx *context) SendUnavailable() {
-	ctx.SendHttpError(http.StatusServiceUnavailable)
+// Status sets the status code.
+func (ctx *context) Status(code int) {
+	ctx.writer.setStatus(code)
 }
 
 // SendHttpError send HTTP error with the given code.
@@ -437,8 +410,8 @@ func (ctx *context) AppendHttpHeader(header http.Header) {
 }
 
 // WriteToResponseNow writes the actual response of context to the underlying connection.
-func (ctx *context) WriteToResponseNow() {
-	ctx.writer.writeToResponse()
+func (ctx *context) Flush() {
+	ctx.writer.flush()
 }
 
 // Copy copies the content of the given reader to the response writer.
@@ -497,7 +470,7 @@ func (rw *responseWriter) copy(r io.Reader) {
 	rw.b = buff.Bytes()
 }
 
-func (rw *responseWriter) writeToResponse() {
+func (rw *responseWriter) flush() {
 	if len(rw.b) == 0 && rw.statusCode >= http.StatusMultipleChoices {
 		http.Error(rw.w, http.StatusText(rw.statusCode), rw.statusCode)
 		return

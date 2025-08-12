@@ -186,58 +186,6 @@ func TestResponse(t *testing.T) {
 				"Content-Type": []string{JsonContentTypeUTF8},
 			},
 		},
-		{
-			name:       "SendNotFound",
-			getContext: defaultGetCtx,
-			write: func(ctx Context) {
-				ctx.SendNotFound()
-			},
-			expectedStatusCode: http.StatusNotFound,
-			expectedBody:       http.StatusText(http.StatusNotFound),
-			expectedHeader: http.Header{
-				"Content-Type":           []string{"text/plain; charset=utf-8"},
-				"X-Content-Type-Options": []string{"nosniff"},
-			},
-		},
-		{
-			name:       "SendInternalServerError",
-			getContext: defaultGetCtx,
-			write: func(ctx Context) {
-				ctx.SendInternalServerError()
-			},
-			expectedStatusCode: http.StatusInternalServerError,
-			expectedBody:       http.StatusText(http.StatusInternalServerError),
-			expectedHeader: http.Header{
-				"Content-Type":           []string{"text/plain; charset=utf-8"},
-				"X-Content-Type-Options": []string{"nosniff"},
-			},
-		},
-		{
-			name:       "SendMethodNotAllowed",
-			getContext: defaultGetCtx,
-			write: func(ctx Context) {
-				ctx.SendMethodNotAllowed()
-			},
-			expectedStatusCode: http.StatusMethodNotAllowed,
-			expectedBody:       http.StatusText(http.StatusMethodNotAllowed),
-			expectedHeader: http.Header{
-				"Content-Type":           []string{"text/plain; charset=utf-8"},
-				"X-Content-Type-Options": []string{"nosniff"},
-			},
-		},
-		{
-			name:       "SendUnauthorized",
-			getContext: defaultGetCtx,
-			write: func(ctx Context) {
-				ctx.SendUnauthorized()
-			},
-			expectedStatusCode: http.StatusUnauthorized,
-			expectedBody:       http.StatusText(http.StatusUnauthorized),
-			expectedHeader: http.Header{
-				"Content-Type":           []string{"text/plain; charset=utf-8"},
-				"X-Content-Type-Options": []string{"nosniff"},
-			},
-		},
 	}
 
 	for _, tc := range tt {
@@ -249,7 +197,7 @@ func TestResponse(t *testing.T) {
 
 			tc.write(ctx)
 
-			ctx.WriteToResponseNow()
+			ctx.Flush()
 
 			var (
 				writtenCode   = rec.Code

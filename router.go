@@ -3,11 +3,9 @@ package gorouter
 import (
 	ctxpkg "context"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"sync"
 	"syscall"
 )
@@ -123,10 +121,6 @@ type router struct {
 	// A handler when the method tree is empty.
 	emptyTreeHandler HandlerFunc
 
-	// A custom function to read the body of the
-	// incoming request in advance.
-	bodyReader bodyReaderFn
-
 	logger Logger
 }
 
@@ -192,14 +186,6 @@ func WithPanicHandler(h PanicHandlerFunc) routerOptionFunc {
 	}
 }
 
-// WithBodyReader allows to configure a default body reader function
-// or disable it (by passing in <nil>).
-func WithBodyReader(reader bodyReaderFn) routerOptionFunc {
-	return func(r *router) {
-		r.bodyReader = reader
-	}
-}
-
 // WithServerName allows to configure the server name of the instance.
 func WithServerName(name string) routerOptionFunc {
 	return func(r *router) {
@@ -245,8 +231,6 @@ func New(opts ...routerOptionFunc) Router {
 		emptyTreeHandler: defaultEmptyTreeHandler,
 		optionsHandler:   nil,
 		panicHandler:     nil,
-
-		bodyReader: defaultBodyReader,
 	}
 
 	for _, o := range opts {
@@ -266,12 +250,6 @@ func New(opts ...routerOptionFunc) Router {
 				Logger:                    logger,
 			})
 		},
-	}
-
-	// If it was not disabled during by the opts,
-	// then we append the middleware to preRunners.
-	if r.bodyReader != nil {
-		r.RegisterMiddlewares(r.getBodyReaderMiddleware())
 	}
 
 	// Registering the logger and writer middleware to the postrunners.
@@ -477,24 +455,11 @@ func (r *router) addRoute(method string, url string, handler HandlerFunc) Route 
 }
 
 func defaultNotFoundHandler(ctx Context) {
-	ctx.SendNotFound()
+	ctx.Status(http.StatusNotFound)
 }
 
 func defaultEmptyTreeHandler(ctx Context) {
-	ctx.SendMethodNotAllowed()
-}
-
-func defaultBodyReader(r *http.Request) []byte {
-	if r == nil {
-		return nil
-	}
-	defer r.Body.Close()
-
-	b, err := io.ReadAll(r.Body)
-	if err != nil {
-		return nil
-	}
-	return b
+	ctx.Status(http.StatusMethodNotAllowed)
 }
 
 func (r *router) getHandler(ctx Context) HandlerFunc {
@@ -518,42 +483,9 @@ func (r *router) getHandler(ctx Context) HandlerFunc {
 	return route.execute
 }
 
-func (r *router) getBodyReaderMiddleware() Middleware {
-	var matcher = func(ctx Context) bool {
-		if r.bodyReader == nil {
-			return false
-		}
-		// If the content type of the request
-		// is forbidden to read from eg. multipart/form-data
-		// then this matcher should return false.
-		contentType := ctx.GetContentType()
-		for _, ct := range exceptionContentTypes {
-			if strings.Contains(contentType, ct) {
-				return false
-			}
-		}
-		for _, e := range couldReadBody {
-			if e == ctx.GetRequestMethod() {
-				return true
-			}
-		}
-		return false
-	}
-
-	var mw = func(ctx Context, next HandlerFunc) {
-		ctx.BindValue(incomingBodyKey, r.bodyReader(ctx.GetRequest()))
-		next(ctx)
-	}
-
-	return NewMiddleware(mw,
-		MiddlewareWithMatchers(matcher),
-		MiddlewareWithAlwaysAllowed(true),
-	)
-}
-
 func getWriterPostMiddleware() Middleware {
 	mw := func(ctx Context, next HandlerFunc) {
-		ctx.WriteToResponseNow()
+		ctx.Flush()
 		next(ctx)
 	}
 
