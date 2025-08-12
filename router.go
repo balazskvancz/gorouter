@@ -22,11 +22,15 @@ type Router interface {
 	RegisterPostMiddlewares(middlewares ...Middleware)
 
 	// All the available methods to register:
-	Get(string, HandlerFunc) Route
-	Post(string, HandlerFunc) Route
-	Put(string, HandlerFunc) Route
-	Delete(string, HandlerFunc) Route
-	Head(string, HandlerFunc) Route
+	Get(url string, handler HandlerFunc) Route
+	Post(url string, handler HandlerFunc) Route
+	Put(url string, handler HandlerFunc) Route
+	Delete(url string, handler HandlerFunc) Route
+	Head(url string, handler HandlerFunc) Route
+	Options(url string, handler HandlerFunc) Route
+	Trace(url string, handler HandlerFunc) Route
+	Patch(url string, handler HandlerFunc) Route
+	Connect(url string, handler HandlerFunc) Route
 }
 
 type (
@@ -344,6 +348,26 @@ func (r *router) Delete(url string, handler HandlerFunc) Route {
 // Head registers creates and returns new route with HTTP HEAD method.
 func (r *router) Head(url string, handler HandlerFunc) Route {
 	return r.addRoute(http.MethodHead, url, handler)
+}
+
+// Options registers creates and returns new route with HTTP OPTIONS method.
+func (r *router) Options(url string, handler HandlerFunc) Route {
+	return r.addRoute(http.MethodOptions, url, handler)
+}
+
+// Trace registers creates and returns new route with HTTP TRACE method.
+func (r *router) Trace(url string, handler HandlerFunc) Route {
+	return r.addRoute(http.MethodTrace, url, handler)
+}
+
+// Patch registers creates and returns new route with HTTP Patch method.
+func (r *router) Patch(url string, handler HandlerFunc) Route {
+	return r.addRoute(http.MethodPatch, url, handler)
+}
+
+// Connect registers creates and returns new route with HTTP CONNECT method.
+func (r *router) Connect(url string, handler HandlerFunc) Route {
+	return r.addRoute(http.MethodConnect, url, handler)
 }
 
 // Serve seaches for the right handler – and middleware – based upon the given context.
