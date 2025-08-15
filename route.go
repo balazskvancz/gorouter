@@ -5,7 +5,7 @@ import (
 )
 
 var (
-	query = '?'
+	query rune = '?'
 )
 
 // removeQueryParts removes the query strings from
@@ -19,66 +19,48 @@ func removeQueryPart(url string) string {
 }
 
 type route struct {
-	fullUrl string
-	router  *router
-
-	chain []HandlerFunc
+	fullUrl     string
+	handler     HandlerFunc
+	middlewares map[MiddlewareType]Middlewares
 }
 
 type Route interface {
-	RegisterMiddlewares(...MiddlewareFunc) Route
+	Handler
+	ExecuteChain(ctx Context, lastIndex uint8)
+	RegisterMiddlewares(mws ...Middleware) Route
 	GetUrl() string
-	execute(Context)
 }
 
 var _ Route = (*route)(nil)
 
 func newRoute(url string, fn HandlerFunc, r *router) *route {
 	return &route{
-		fullUrl: url,
-		chain:   []HandlerFunc{fn},
-		router:  r,
+		fullUrl:     url,
+		handler:     fn,
+		middlewares: make(map[MiddlewareType]Middlewares),
 	}
 }
 
-func (route *route) registerMiddleware(mw MiddlewareFunc) *route {
+func (route *route) registerMiddleware(m Middleware) *route {
 	if route == nil {
 		return nil
 	}
 
-	if len(route.chain) == 0 {
-		return route
-	}
-
-	if !route.router.routerInfo.areMiddlewaresEnabled {
-		return route
-	}
-
-	chain := route.chain
-
-	var mwFun HandlerFunc = func(ctx Context) {
-		mw(ctx, chain[0])
-	}
-
-	route.chain = append([]HandlerFunc{mwFun}, route.chain...)
+	t := m.Type()
+	route.middlewares[t] = append(route.middlewares[t], m)
 
 	return route
 }
 
 // RegisterMiddlewares registers all the given middlewares one-by-one,
 // then returns the route pointer.
-func (route *route) RegisterMiddlewares(mws ...MiddlewareFunc) Route {
+func (route *route) RegisterMiddlewares(mws ...Middleware) Route {
 	if route == nil {
 		return nil
 	}
 
-	if len(mws) == 0 {
-		return route
-	}
-
-	// Have to register in reversed order.
-	for i := len(mws) - 1; i >= 0; i-- {
-		route.registerMiddleware(mws[i])
+	for _, m := range mws {
+		route.registerMiddleware(m)
 	}
 
 	return route
@@ -91,8 +73,35 @@ func (route *route) GetUrl() string {
 	return route.fullUrl
 }
 
-func (route *route) execute(ctx Context) {
-	if route != nil && len(route.chain) > 0 {
-		route.chain[0](ctx)
+func (route *route) ExecuteChain(ctx Context, lastIndex uint8) {
+	var (
+		needToExecuteHandler = true
+		last                 = lastIndex
+	)
+
+	for _, e := range route.middlewares[MiddlewarePreRunner] {
+		e.Handle(ctx)
+
+		currentIndex := ctx.GetCurrentIndex()
+		if currentIndex == last {
+			needToExecuteHandler = false
+
+			break
+		}
+
+		last = currentIndex
 	}
+
+	if needToExecuteHandler {
+		route.Handle(ctx)
+	}
+
+	for _, e := range route.middlewares[MiddlewarePostRunner] {
+		e.Handle(ctx)
+	}
+}
+
+func (route *route) Handle(ctx Context) {
+	route.handler(ctx)
+	ctx.Next()
 }

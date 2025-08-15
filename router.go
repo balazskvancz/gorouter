@@ -33,13 +33,17 @@ type Router interface {
 
 type (
 	HandlerFunc      func(Context)
-	MiddlewareFunc   func(Context, HandlerFunc)
+	MiddlewareFunc   = HandlerFunc
 	PanicHandlerFunc func(Context, interface{})
 
 	routerOptionFunc func(*router)
 
 	bodyReaderFn func(*http.Request) []byte
 )
+
+type Handler interface {
+	Handle(Context)
+}
 
 const (
 	version string = "v1.3.0"
@@ -252,12 +256,6 @@ func New(opts ...routerOptionFunc) Router {
 		},
 	}
 
-	// Registering the logger and writer middleware to the postrunners.
-	r.RegisterPostMiddlewares(
-		getWriterPostMiddleware(), // First we write the response to the connection,
-		getLoggerMiddleware(),     // then log write the log to stdout.
-	)
-
 	return r
 }
 
@@ -358,20 +356,54 @@ func (r *router) Serve(ctx Context) {
 		}()
 	}
 
-	var (
-		handler = r.getHandler(ctx)
+	defer func() {
+		ctx.Flush()
+	}()
 
-		preMw  = r.filterMatchinMiddleware(ctx, MiddlewarePreRunner)
-		postMw = r.filterMatchinMiddleware(ctx, MiddlewarePostRunner)
+	method := ctx.GetRequestMethod()
+	if method == http.MethodOptions {
+		if r.optionsHandler != nil {
+			r.optionsHandler(ctx)
+
+			return
+		}
+	}
+
+	route, params, err := r.endpointTree.find(method, ctx.GetCleanedUrl())
+	if err != nil {
+		fmt.Println(err)
+		return // TODO: what to do with it?
+	}
+
+	ctx.BindValue(routeParamsKey, params)
+
+	var (
+		preRunners, postRunners       = r.filterMatchingMiddlewares(ctx)
+		lastIndex               uint8 = 0
+		needToExecuteHandler          = true
 	)
 
-	// Then simply execute the chain.
-	var (
-		preChain  = preMw.createChain(handler)
-		postChain = postMw.createChain(func(_ Context) {})
-	)
-	preChain(ctx)
-	postChain(ctx)
+	var executor = func(arr []Handler) {
+		for _, e := range arr {
+			e.Handle(ctx)
+
+			currentIndex := ctx.GetCurrentIndex()
+			if currentIndex == lastIndex {
+				needToExecuteHandler = false
+				break
+			}
+
+			lastIndex = currentIndex
+		}
+	}
+
+	executor(preRunners)
+
+	if needToExecuteHandler {
+		route.ExecuteChain(ctx, lastIndex)
+	}
+
+	executor(postRunners)
 }
 
 // ServeHTTP is the main entrypoint for every incoming HTTP requests.
@@ -403,7 +435,7 @@ func (router *router) RegisterPostMiddlewares(middlewares ...Middleware) {
 	router.appendToMiddlewares(MiddlewarePostRunner, middlewares...)
 }
 
-func (router *router) appendToMiddlewares(mType middlewareType, middlewares ...Middleware) {
+func (router *router) appendToMiddlewares(mType MiddlewareType, middlewares ...Middleware) {
 	if len(middlewares) == 0 {
 		return
 	}
@@ -417,18 +449,25 @@ func (router *router) appendToMiddlewares(mType middlewareType, middlewares ...M
 	router.middlewares[mType] = append(router.middlewares[mType], middlewares...)
 }
 
-func (router *router) filterMatchinMiddleware(ctx Context, mwType middlewareType) middlewares {
-	mm := make([]Middleware, 0)
-	for _, m := range router.middlewares[mwType] {
-		if !router.areMiddlewaresEnabled && !m.IsAlwaysAllowed() {
-			continue
-		}
+func (router *router) filterMatchingMiddlewares(ctx Context) ([]Handler, []Handler) {
+	var (
+		preRunners  = make([]Handler, 0)
+		postRunners = make([]Handler, 0)
+	)
 
-		if m.DoesMatch(ctx) {
-			mm = append(mm, m)
+	for _, e := range router.middlewares[MiddlewarePreRunner] {
+		if e.DoesMatch(ctx) {
+			preRunners = append(preRunners, e)
 		}
 	}
-	return mm
+
+	for _, e := range router.middlewares[MiddlewarePostRunner] {
+		if e.DoesMatch(ctx) {
+			postRunners = append(postRunners, e)
+		}
+	}
+
+	return preRunners, postRunners
 }
 
 func getContextIdChan() contextIdChan {
@@ -460,44 +499,4 @@ func defaultNotFoundHandler(ctx Context) {
 
 func defaultEmptyTreeHandler(ctx Context) {
 	ctx.Status(http.StatusMethodNotAllowed)
-}
-
-func (r *router) getHandler(ctx Context) HandlerFunc {
-	m := ctx.GetRequestMethod()
-	// In case of HTTP OPTIONS, we use preregistered handler.
-	if m == http.MethodOptions {
-		if r.optionsHandler != nil {
-			return r.optionsHandler
-		}
-		return func(_ Context) {}
-	}
-
-	// WIP
-	route, params, _ := r.endpointTree.find(m, ctx.GetCleanedUrl())
-	if route == nil {
-		return r.notFoundHandler
-	}
-
-	ctx.BindValue(routeParamsKey, params)
-
-	return route.execute
-}
-
-func getWriterPostMiddleware() Middleware {
-	mw := func(ctx Context, next HandlerFunc) {
-		ctx.Flush()
-		next(ctx)
-	}
-
-	return NewMiddleware(mw, MiddlewareWithAlwaysAllowed(true))
-}
-
-func getLoggerMiddleware() Middleware {
-	var mw = func(ctx Context, next HandlerFunc) {
-		log := ctx.GetLog()
-		ctx.Info(log.Serialize())
-		next(ctx)
-	}
-
-	return NewMiddleware(mw, MiddlewareWithAlwaysAllowed(true))
 }

@@ -32,8 +32,8 @@ const (
 
 	bindedValueKey bindValueKey = "bindedValues"
 
-	routeParamsKey  ContextKey = "__routeParams__"
-	incomingBodyKey ContextKey = "__incomingBody__"
+	routeParamsKey ContextKey = "__routeParams__"
+	queryParamsKey ContextKey = "__queryParams__"
 )
 
 var (
@@ -73,6 +73,8 @@ type context struct {
 	isFormParsed bool
 
 	logger Logger
+
+	index uint8
 }
 
 type Context interface {
@@ -82,12 +84,14 @@ type Context interface {
 	Reset(http.ResponseWriter, *http.Request)
 	Empty()
 	GetContextId() uint64
+	GetCurrentIndex() uint8
 
 	// ---- Request
 	GetRequest() *http.Request
 	GetRequestMethod() string
 	GetUrl() string
 	GetCleanedUrl() string
+	GetRegisteredUrl() string
 	GetQueryParams() url.Values
 	GetQueryParam(string) string
 	BindValue(ContextKey, any)
@@ -115,6 +119,8 @@ type Context interface {
 	Status(code int)
 
 	GetLog() *contextLog
+
+	Next()
 }
 
 var _ Context = (*context)(nil)
@@ -146,6 +152,7 @@ func NewContext(conf ContextConfig) *context {
 		writer:        newResponseWriter(conf.DefaultResponseStatusCode),
 		maxBodySize:   conf.MaxIncomingBodySize,
 		logger:        conf.Logger,
+		index:         1,
 	}
 }
 
@@ -176,11 +183,16 @@ func (c *context) Empty() {
 
 	c.request = nil
 	c.writer.Empty()
+	c.index = 1
 }
 
 // GetContextId returns the id of the context entity.
 func (c *context) GetContextId() uint64 {
 	return c.contextId
+}
+
+func (c *context) GetCurrentIndex() uint8 {
+	return c.index
 }
 
 // GetRequest returns the attached http.Request pointer.
@@ -236,9 +248,22 @@ func (ctx *context) GetCleanedUrl() string {
 	return removeQueryPart(ctx.GetUrl())
 }
 
+// GetRegisteredUrl returns the exact url,
+// with which the current endpoint was registerd.
+func (ctx *context) GetRegisteredUrl() string {
+	return "TODO"
+}
+
 // GetQueryParams returns the query params of the url.
 func (ctx *context) GetQueryParams() url.Values {
-	return ctx.request.URL.Query()
+	query, ok := ctx.ctx.Value(queryParamsKey).(url.Values)
+	if !ok {
+		query = ctx.request.URL.Query()
+
+		ctx.ctx = ctxpkg.WithValue(ctx.ctx, queryParamsKey, query)
+	}
+
+	return query
 }
 
 // GetQueryParam returns the queryParam identified by the given key.
@@ -419,9 +444,15 @@ func (ctx *context) Copy(r io.Reader) {
 	ctx.writer.copy(r)
 }
 
+// Next increments the index of the given context,
+// thus signalling to the engine, that the next entity
+// should be called in the handler chain.
+func (ctx *context) Next() {
+	ctx.index += 1
+}
+
 func (ctx *context) discard() {
 	m := ctx.GetRequestMethod()
-
 	if m != http.MethodPost && m != http.MethodPut {
 		return
 	}

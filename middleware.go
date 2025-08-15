@@ -1,10 +1,10 @@
 package gorouter
 
-type middlewareType string
+type MiddlewareType string
 
 const (
-	MiddlewarePreRunner  middlewareType = "preRunner"
-	MiddlewarePostRunner middlewareType = "postRunner"
+	MiddlewarePreRunner  MiddlewareType = "preRunner"
+	MiddlewarePostRunner MiddlewareType = "postRunner"
 )
 
 type MiddlewareMatcherFunc func(Context) bool
@@ -13,17 +13,19 @@ type middleware struct {
 	matcher         MiddlewareMatcherFunc
 	handler         MiddlewareFunc
 	isAlwaysAllowed bool
+	mwType          MiddlewareType
 }
 
 type Middleware interface {
+	Handler
 	DoesMatch(Context) bool
-	Execute(Context, HandlerFunc)
 	IsAlwaysAllowed() bool
+	Type() MiddlewareType
 }
 
 type (
-	middlewares        []Middleware
-	middlewareRegistry map[middlewareType]middlewares
+	Middlewares        = []Middleware
+	middlewareRegistry map[MiddlewareType]Middlewares
 )
 
 func defaultMatcher(_ Context) bool { return true }
@@ -57,6 +59,14 @@ func MiddlewareWithAlwaysAllowed(isAlwaysAllowed bool) MiddlewareOptionFunc {
 	}
 }
 
+// MiddlewareWithType configures the type of the new middleware.
+func MiddlewareWithType(mwType MiddlewareType) MiddlewareOptionFunc {
+	return func(m *middleware) {
+		// TODO: validation!
+		m.mwType = mwType
+	}
+}
+
 // NewMiddleware creates and returns a new middleware based
 // upon the given MiddlewareFunc and matchers.
 func NewMiddleware(handler MiddlewareFunc, opts ...MiddlewareOptionFunc) Middleware {
@@ -82,8 +92,8 @@ func (mw *middleware) DoesMatch(ctx Context) bool {
 
 // Execute executes the underlying handler with the given context
 // and the Handler as next to be called.
-func (mw *middleware) Execute(ctx Context, next HandlerFunc) {
-	mw.handler(ctx, next)
+func (mw *middleware) Handle(ctx Context) {
+	mw.handler(ctx)
 }
 
 // IsAlwaysAllowed returns whether a certain middleware should run
@@ -92,29 +102,7 @@ func (mw *middleware) IsAlwaysAllowed() bool {
 	return mw.isAlwaysAllowed
 }
 
-func (m middlewares) createChain(next HandlerFunc) HandlerFunc {
-	return func(ctx Context) {
-		if len(m) == 0 { // Its more verbose than checking for m == nil.
-			next(ctx)
-			return
-		}
-
-		var handler = reduceRight(m, func(acc HandlerFunc, curr Middleware) HandlerFunc {
-			return func(ctx Context) {
-				curr.Execute(ctx, acc)
-			}
-		}, next)
-
-		handler(ctx)
-	}
-}
-
-type reduceFn[K, T any] func(K, T) K
-
-func reduceRight[T, K any](arr []T, fn reduceFn[K, T], initial K) K {
-	var acc K = initial
-	for idx := len(arr) - 1; idx >= 0; idx-- {
-		acc = fn(acc, arr[idx])
-	}
-	return acc
+// Type returns the type of the middleware.
+func (mw *middleware) Type() MiddlewareType {
+	return mw.mwType
 }
