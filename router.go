@@ -11,7 +11,7 @@ import (
 )
 
 type Router interface {
-	ServeHTTP(http.ResponseWriter, *http.Request)
+	http.Handler
 
 	Serve(Context)
 	ListenWithContext(ctxpkg.Context)
@@ -37,8 +37,6 @@ type (
 	PanicHandlerFunc func(Context, interface{})
 
 	routerOptionFunc func(*router)
-
-	bodyReaderFn func(*http.Request) []byte
 )
 
 type Handler interface {
@@ -50,21 +48,6 @@ const (
 
 	defaultAddress    int    = 8000
 	defaultServerName string = "goRouter"
-)
-
-var (
-	// The automatic reading of the incoming postData – if it is enabled –
-	// is only done, if the method of the incoming request is one these methods.
-	couldReadBody []string = []string{http.MethodPost, http.MethodPut}
-
-	// Also connects to body reading. If the content type of
-	// the incoming request is one of the listed types,
-	// then the automatic reading is not perfomed.
-	// Note that, in case of this inspection we look for substring match
-	// not for exact match.
-	// For now, only the multipart/form-data content type is not read
-	// by default, maybe should change it automatic parseing instead of reading.
-	exceptionContentTypes []string = []string{MultiPartFormContentType}
 )
 
 type routerInfo struct {
@@ -81,9 +64,6 @@ type routerInfo struct {
 	// If no response is written during the execution,
 	// then this code will be written to the response.
 	defaultResponseStatusCode int
-
-	//
-	areMiddlewaresEnabled bool
 }
 
 type router struct {
@@ -197,13 +177,6 @@ func WithServerName(name string) routerOptionFunc {
 	}
 }
 
-// WithMiddlewaresEnabled allows to configure the state of the middlewares.
-func WithMiddlewaresEnabled(areEnabled bool) routerOptionFunc {
-	return func(r *router) {
-		r.routerInfo.areMiddlewaresEnabled = areEnabled
-	}
-}
-
 // WithEmptyTreeHandler allows to configure the handler in case of an empty method tree event.
 func WithEmptyTreeHandler(handler HandlerFunc) routerOptionFunc {
 	return func(r *router) {
@@ -222,7 +195,6 @@ func New(opts ...routerOptionFunc) Router {
 			address:                   defaultAddress,
 			defaultResponseStatusCode: defaultStatusCode,
 			maxFormSize:               defaultMaxFormBodySize,
-			areMiddlewaresEnabled:     true, // By default every middleware are enabled.
 		},
 
 		// By deafult we simply use the Background context.
