@@ -633,3 +633,61 @@ func BenchmarkFind(b *testing.B) {
 		tree.find(http.MethodPost, "/api/1/delete/2025")
 	}
 }
+
+func TestGetTreeInfo(t *testing.T) {
+	type testCase struct {
+		name     string
+		tree     *node
+		expected map[string]int
+	}
+
+	var (
+		onlyGetTree     = newNode()
+		multiMethodTree = newNode()
+	)
+
+	onlyGetTree.insert(http.MethodGet, "/api/foo", mockRoute{})
+	onlyGetTree.insert(http.MethodGet, "/api/bar", mockRoute{})
+	onlyGetTree.insert(http.MethodGet, "/api/baz", mockRoute{})
+
+	multiMethodTree.insert(http.MethodGet, "/api/foo", mockRoute{})
+	multiMethodTree.insert(http.MethodPost, "/api/foo", mockRoute{})
+	multiMethodTree.insert(http.MethodGet, "/api/bar", mockRoute{})
+	multiMethodTree.insert(http.MethodPost, "/api/bar", mockRoute{})
+	multiMethodTree.insert(http.MethodGet, "/api/baz", mockRoute{})
+	multiMethodTree.insert(http.MethodPut, "/api/baz", mockRoute{})
+
+	tt := []testCase{
+		{
+			name:     "empty tree gives empty map",
+			tree:     newNode(),
+			expected: map[string]int{},
+		},
+		{
+			name: "returns correct map if the tree only contains GET endpoints",
+			tree: onlyGetTree,
+			expected: map[string]int{
+				http.MethodGet: 3,
+			},
+		},
+		{
+			name: "returns correct map if the tree only contains GET endpoints",
+			tree: multiMethodTree,
+			expected: map[string]int{
+				http.MethodGet:  3,
+				http.MethodPost: 2,
+				http.MethodPut:  1,
+			},
+		},
+	}
+
+	for _, tc := range tt {
+		t.Run(tc.name, func(t *testing.T) {
+			info := tc.tree.getTreeInfo()
+
+			if !reflect.DeepEqual(info, tc.expected) {
+				t.Errorf("expected map: %v; got map: %v\n", tc.expected, info)
+			}
+		})
+	}
+}

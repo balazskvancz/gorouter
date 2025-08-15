@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -72,19 +73,17 @@ type context struct {
 
 	isFormParsed bool
 
-	logger Logger
-
 	index uint8
 }
 
 type Context interface {
-	Logger
-
 	// ---- Methods about the Context itself.
 	Reset(http.ResponseWriter, *http.Request)
 	Empty()
 	GetContextId() uint64
 	GetCurrentIndex() uint8
+	GetStartTime() time.Time
+	Next()
 
 	// ---- Request
 	GetRequest() *http.Request
@@ -98,13 +97,20 @@ type Context interface {
 	GetBindedValue(ContextKey) any
 	GetRequestHeader(string) string
 	GetContentType() string
-	GetParam(string) string
-	GetParams() pathParams
 	GetRequestHeaders() http.Header
 	GetBody() io.ReadCloser
 	ParseForm() error
 	GetFormFile(string) (File, error)
 	GetFormValue(string) (string, error)
+	GetParam(key string) string
+	GetIntParam(key string) (int, error)
+	GetInt8Param(key string) (int8, error)
+	GetInt16Param(key string) (int16, error)
+	GetInt32Param(key string) (int32, error)
+	GetInt64Param(key string) (int64, error)
+	GetFloat32Param(key string) (float32, error)
+	GetFloat64Param(key string) (float64, error)
+	GetParams() pathParams
 
 	// ---- Response
 	SendJson(anyValue, ...int)
@@ -115,12 +121,7 @@ type Context interface {
 	AppendHttpHeader(header http.Header)
 	Flush()
 	Copy(io.Reader)
-
 	Status(code int)
-
-	GetLog() *contextLog
-
-	Next()
 }
 
 var _ Context = (*context)(nil)
@@ -142,7 +143,6 @@ type ContextConfig struct {
 	ContextIdChannel          contextIdChan
 	DefaultResponseStatusCode int
 	MaxIncomingBodySize       int64
-	Logger                    Logger
 }
 
 // NewContext creates and returns a new context.
@@ -151,7 +151,6 @@ func NewContext(conf ContextConfig) *context {
 		contextIdChan: conf.ContextIdChannel,
 		writer:        newResponseWriter(conf.DefaultResponseStatusCode),
 		maxBodySize:   conf.MaxIncomingBodySize,
-		logger:        conf.Logger,
 		index:         1,
 	}
 }
@@ -191,8 +190,16 @@ func (c *context) GetContextId() uint64 {
 	return c.contextId
 }
 
+// GetCurrentIndex returns the current index,
+// which translates directly to how many times
+// the Next() function was called to that point.
 func (c *context) GetCurrentIndex() uint8 {
 	return c.index
+}
+
+// GetStartTime
+func (c *context) GetStartTime() time.Time {
+	return time.Now()
 }
 
 // GetRequest returns the attached http.Request pointer.
@@ -298,6 +305,62 @@ func (ctx *context) GetContentType() string {
 // GetParam returns the value of the param identified by the given key.
 func (ctx *context) GetParam(key string) string {
 	return ctx.GetParams()[key]
+}
+
+// GetIntParam returns the parsed integer value of the param identified by the given key.
+func (ctx *context) GetIntParam(key string) (int, error) {
+	v := ctx.GetParams()[key]
+	return strconv.Atoi(v)
+}
+
+// GetInt8Param returns the parsed int8 value of the param identified by the given key.
+func (ctx *context) GetInt8Param(key string) (int8, error) {
+	i, err := ctx.GetIntParam(key)
+	if err != nil {
+		return 0, nil
+	}
+	return int8(i), nil
+}
+
+// GetInt16Param returns the parsed int16 value of the param identified by the given key.
+func (ctx *context) GetInt16Param(key string) (int16, error) {
+	i, err := ctx.GetIntParam(key)
+	if err != nil {
+		return 0, nil
+	}
+	return int16(i), nil
+}
+
+// GetInt32Param returns the parsed int32 value of the param identified by the given key.
+func (ctx *context) GetInt32Param(key string) (int32, error) {
+	i, err := ctx.GetIntParam(key)
+	if err != nil {
+		return 0, nil
+	}
+	return int32(i), nil
+}
+
+// GetInt64Param returns the parsed int64 value of the param identified by the given key.
+func (ctx *context) GetInt64Param(key string) (int64, error) {
+	i, err := ctx.GetIntParam(key)
+	if err != nil {
+		return 0, nil
+	}
+	return int64(i), nil
+}
+
+// GetFloat32Param returns the parsed float32 value of the param identified by the given key.
+func (ctx *context) GetFloat32Param(key string) (float32, error) {
+	f, err := ctx.GetFloat64Param(key)
+	if err != nil {
+		return 0.0, err
+	}
+	return float32(f), nil
+}
+
+// GetFloat64Param returns the parsed float64 value of the param identified by the given key.
+func (ctx *context) GetFloat64Param(key string) (float64, error) {
+	return strconv.ParseFloat(ctx.GetParam(key), 64)
 }
 
 // GetParams returns all the path params associated with thre context.
@@ -556,43 +619,4 @@ func (ff *formFile) SaveTo(filePath string) error {
 	}
 	_, err = ff.WriteTo(file)
 	return err
-}
-
-// Info handles info type logging.
-func (ctx *context) Info(format string, v ...any) {
-	ctx.logger.Info(fmt.Sprintf("[%d] %s", ctx.contextId, format), v...)
-}
-
-// Warning handles warning type logging.
-func (ctx *context) Warning(format string, v ...any) {
-	ctx.logger.Warning(fmt.Sprintf("[%d] %s", ctx.contextId, format), v...)
-}
-
-// Error handles error type logging.
-func (ctx *context) Error(format string, v ...any) {
-	ctx.logger.Error(fmt.Sprintf("[%d] %s", ctx.contextId, format), v...)
-}
-
-type contextLog struct {
-	method      string
-	url         string
-	code        int
-	elapsedTime int64
-	contextId   uint64
-}
-
-func (ctx *context) GetLog() *contextLog {
-	elapsedTime := time.Since(ctx.startTime)
-
-	return &contextLog{
-		method:      ctx.GetRequestMethod(),
-		url:         ctx.GetUrl(),
-		code:        ctx.writer.statusCode,
-		elapsedTime: elapsedTime.Milliseconds(),
-		contextId:   ctx.contextId,
-	}
-}
-
-func (cl *contextLog) Serialize() string {
-	return fmt.Sprintf("[%s]\t%s\t%d\t%dms", cl.method, cl.url, cl.code, cl.elapsedTime)
 }

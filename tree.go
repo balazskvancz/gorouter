@@ -422,6 +422,39 @@ func (n *node) find(method string, url string) (Route, pathParams, error) {
 	return v.route, params, nil
 }
 
+// type treeInfo struct {
+// endpointsCount map[string]int
+// totalCount     int
+// }
+
+func (n *node) getTreeInfo() map[string]int {
+	var (
+		nodes   = []*node{n}
+		counter = make(map[string]int)
+	)
+
+	for i := 0; i < len(nodes); i++ {
+		currNode := nodes[i]
+		if currNode == nil {
+			continue
+		}
+
+		for method := range currNode.values {
+			if e, ok := counter[method]; ok {
+				counter[method] = e + 1
+			} else {
+				counter[method] = 1
+			}
+		}
+
+		if currNode.children != nil {
+			nodes = append(nodes, currNode.children...)
+		}
+	}
+
+	return counter
+}
+
 /** DEBUG */
 // func (n *node) debugTree() {
 // dfs(n, 1)

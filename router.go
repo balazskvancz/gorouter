@@ -8,7 +8,20 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"text/tabwriter"
 )
+
+var logo string = `
++================================================+
+|                                                |
+|                                _               |
+|     __ _  ___  _ __ ___  _   _| |_ ___ _ __    |
+|    / _' |/ _ \| '__/ _ \| | | | __/ _ \ '__|   |
+|   | (_| | (_) | | | (_) | |_| | ||  __/ |      |
+|    \__, |\___/|_|  \___/ \__,_|\__\___|_|      |
+|    |___/                                       |
+|                                                |
++================================================+`
 
 type Router interface {
 	http.Handler
@@ -223,7 +236,6 @@ func New(opts ...routerOptionFunc) Router {
 				ContextIdChannel:          ctxIdChannel,
 				DefaultResponseStatusCode: r.routerInfo.defaultResponseStatusCode,
 				MaxIncomingBodySize:       r.maxFormSize,
-				Logger:                    logger,
 			})
 		},
 	}
@@ -239,7 +251,28 @@ func (r *router) Listen() {
 // ListenWithContext starts the HTTP listening with cancellation
 // bounded to the given context.
 func (r *router) ListenWithContext(ctx ctxpkg.Context) {
-	addr := fmt.Sprintf(":%d", r.address)
+	var (
+		addr = fmt.Sprintf(":%d", r.address)
+		info = r.endpointTree.getTreeInfo()
+	)
+
+	fmt.Println(logo + "\n")
+	fmt.Println("+================================================+")
+	w := tabwriter.NewWriter(os.Stdout, 1, 1, 1, ' ', 0)
+	fmt.Fprintln(w, "Version:\t", version)
+	fmt.Fprintln(w, "Address:\t", addr)
+	w.Flush()
+
+	fmt.Fprintln(w, "\nMethod\tCount")
+
+	for method, count := range info {
+		fmt.Fprintln(w, method+":\t", count)
+	}
+
+	w.Flush()
+
+	fmt.Println("+================================================+")
+
 	server := &http.Server{
 		Addr:    addr,
 		Handler: r,
@@ -255,10 +288,7 @@ func (r *router) ListenWithContext(ctx ctxpkg.Context) {
 
 	signal.Notify(signalChannel, os.Interrupt, syscall.SIGTERM)
 
-	r.logger.Info("started listening at %s", addr)
-
 	var shutdown = func() {
-		r.logger.Info("the router is shutting down...")
 		if err := server.Shutdown(ctxpkg.Background()); err != nil {
 			r.logger.Error(err.Error())
 		}
@@ -270,7 +300,6 @@ func (r *router) ListenWithContext(ctx ctxpkg.Context) {
 	case <-ctx.Done():
 		shutdown()
 	}
-	r.logger.Info("the router is shutted down...")
 }
 
 // Get registers creates and returns new route with HTTP GET method.
