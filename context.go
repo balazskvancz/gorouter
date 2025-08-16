@@ -3,7 +3,6 @@ package gorouter
 import (
 	"bytes"
 	ctxpkg "context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,11 +16,8 @@ import (
 )
 
 const (
-	ctHeader string = "Content-Type"
+	contentTypeHeaderKey string = "Content-Type"
 
-	JsonContentType          string = "application/json"
-	JsonContentTypeUTF8      string = JsonContentType + "; charset=UTF-8"
-	TextHtmlContentType      string = "text/html"
 	MultiPartFormContentType string = "multipart/form-data"
 
 	// If there statusCode written to the context,
@@ -51,15 +47,6 @@ type (
 
 	contextMap map[ContextKey]anyValue
 )
-
-type responseWriter struct {
-	defaultStatusCode int
-	statusCode        int
-	header            http.Header
-	b                 []byte
-
-	w http.ResponseWriter
-}
 
 type context struct {
 	ctx     ctxpkg.Context
@@ -92,10 +79,10 @@ type Context interface {
 	GetCleanedUrl() string
 	GetRegisteredUrl() string
 	GetQueryParams() url.Values
-	GetQueryParam(string) string
-	BindValue(ContextKey, any)
-	GetBindedValue(ContextKey) any
-	GetRequestHeader(string) string
+	GetQueryParam(key string) string
+	BindValue(key ContextKey, value any)
+	GetBindedValue(key ContextKey) any
+	GetRequestHeader(key string) string
 	GetContentType() string
 	GetRequestHeaders() http.Header
 	GetBody() io.ReadCloser
@@ -113,15 +100,14 @@ type Context interface {
 	GetParams() pathParams
 
 	// ---- Response
-	SendJson(anyValue, ...int)
-	SendRaw([]byte, int, http.Header)
-	Pipe(*http.Response)
-	SetStatusCode(int)
-	WriteResponse(b []byte)
-	AppendHttpHeader(header http.Header)
+	Pipe(res *http.Response)
+	Status(statusCode int)
+	StatusText(statusCode int)
+	AppendHttpHeader(key string, value string)
 	Flush()
 	Copy(io.Reader)
-	Status(code int)
+	Render(statusCode int, r Response)
+	SendJson(statusCode int, data any)
 }
 
 var _ Context = (*context)(nil)
@@ -135,7 +121,7 @@ type File interface {
 	GetName() string
 	GetSize() int64
 	Close() error
-	WriteTo(io.Writer) (int64, error)
+	WriteTo(w io.Writer) (int64, error)
 	SaveTo(string) error
 }
 
@@ -158,7 +144,7 @@ func NewContext(conf ContextConfig) *context {
 func newResponseWriter(statusCode int) *responseWriter {
 	return &responseWriter{
 		defaultStatusCode: statusCode,
-		header:            http.Header{},
+		buff:              &bytes.Buffer{},
 	}
 }
 
@@ -299,7 +285,7 @@ func (ctx *context) GetRequestHeader(key string) string {
 
 // GetContentType returns te content-type of the original request.
 func (ctx *context) GetContentType() string {
-	return ctx.GetRequestHeader(ctHeader)
+	return ctx.GetRequestHeader(contentTypeHeaderKey)
 }
 
 // GetParam returns the value of the param identified by the given key.
@@ -419,64 +405,32 @@ func (ctx *context) GetFormFile(key string) (File, error) {
 	}, nil
 }
 
-// SendRaw writes the given slice of bytes, statusCode and header to the response.
-func (ctx *context) SendRaw(b []byte, statusCode int, header http.Header) {
-	ctx.WriteResponse(b)
-	ctx.SetStatusCode(statusCode)
-	ctx.AppendHttpHeader(header)
-}
-
 // WriteResponse writes the given slice of bytes to the response.
 func (ctx *context) WriteResponse(b []byte) {
 	ctx.writer.write(b)
 }
 
-// SetStatusCode sets the statusCode for the response.
-func (ctx *context) SetStatusCode(statusCode int) {
+// Status sets the status code.
+func (ctx *context) Status(statusCode int) {
 	ctx.writer.setStatus(statusCode)
 }
 
-// SendsJson send a JSON response to client.
-func (ctx *context) SendJson(data anyValue, code ...int) {
-	statusCode := func() int {
-		if len(code) > 0 {
-			return code[0]
-		}
-		return http.StatusOK
-	}()
+// StatusText sets the status code with the associated status text.
+func (ctx *context) StatusText(statusCode int) {
+	t := http.StatusText(statusCode)
 
-	b, err := json.Marshal(data)
-	if err != nil {
-		fmt.Printf("marshal err: %v\n", err)
-
-		return
-	}
-
-	ctx.SendRaw(b, statusCode, createContentTypeHeader(JsonContentTypeUTF8))
+	ctx.Render(statusCode, &DefaultResponse{Data: []byte(t)})
 }
 
-func createContentTypeHeader(ct string) http.Header {
-	header := http.Header{}
-
-	header.Add(ctHeader, ct)
-
-	return header
+// Render renders the given response with the provided status code.
+func (ctx *context) Render(statusCode int, r Response) {
+	ctx.Status(statusCode)
+	ctx.writer.render(r)
 }
 
-// SendOk send a s basic HTTP 200 response.
-func (ctx *context) SendOk() {
-	ctx.SendRaw(nil, http.StatusOK, http.Header{})
-}
-
-// Status sets the status code.
-func (ctx *context) Status(code int) {
-	ctx.writer.setStatus(code)
-}
-
-// SendHttpError send HTTP error with the given code.
-// It also write the statusText inside the body, based on the code.
-func (ctx *context) SendHttpError(statusCode int) {
-	ctx.SetStatusCode(statusCode)
+// SendJson writes JSON response to the request.
+func (ctx *context) SendJson(statusCode int, data any) {
+	ctx.Render(statusCode, &JsonResponse{Data: data})
 }
 
 // Pipe writes the given repsonse's body, statusCode and headers to the Context's response.
@@ -485,16 +439,18 @@ func (ctx *context) Pipe(res *http.Response) {
 	// what are we writing to the request.
 	// r := io.TeeReader(res.Body, ctx.writer)
 	ctx.writer.copy(res.Body)
-	ctx.AppendHttpHeader(res.Header)
-	ctx.SetStatusCode(res.StatusCode)
+	for k, v := range res.Header {
+		for _, e := range v {
+			ctx.AppendHttpHeader(k, e)
+		}
+	}
+	ctx.Status(res.StatusCode)
 }
 
 // AppendHttpHeader appends all the key-value pairs from the given
 // http.Header to the responses header.
-func (ctx *context) AppendHttpHeader(header http.Header) {
-	for k, v := range header {
-		ctx.writer.addHeader(k, strings.Join(v, ", "))
-	}
+func (ctx *context) AppendHttpHeader(key string, value string) {
+	ctx.writer.addHeader(key, value)
 }
 
 // WriteToResponseNow writes the actual response of context to the underlying connection.
@@ -531,62 +487,6 @@ func (ctx *context) discard() {
 		return
 	}
 	reader.Close()
-}
-
-func (rw *responseWriter) Empty() {
-	rw.b = rw.b[:0]
-	rw.header = http.Header{}
-	rw.statusCode = 0
-	rw.w = nil
-}
-
-func (rw *responseWriter) write(b []byte) {
-	rw.b = b
-}
-
-func (rw *responseWriter) setStatus(statusCode int) {
-	rw.statusCode = statusCode
-}
-
-func (rw *responseWriter) addHeader(key, value string) {
-	rw.header.Add(key, value)
-}
-
-func (rw *responseWriter) copy(r io.Reader) {
-	if rw == nil {
-		return
-	}
-	buff := &bytes.Buffer{}
-	if _, err := io.Copy(buff, r); err != nil {
-		fmt.Println(err)
-		return
-	}
-	rw.b = buff.Bytes()
-}
-
-func (rw *responseWriter) flush() {
-	if len(rw.b) == 0 && rw.statusCode >= http.StatusMultipleChoices {
-		http.Error(rw.w, http.StatusText(rw.statusCode), rw.statusCode)
-		return
-	}
-
-	for k, v := range rw.header {
-		value := strings.Join(v, ",")
-		rw.w.Header().Add(k, value)
-	}
-
-	finalStatusCode := func() int {
-		if rw.statusCode > 0 {
-			return rw.statusCode
-		}
-		if rw.defaultStatusCode > 0 {
-			return rw.defaultStatusCode
-		}
-		return defaultStatusCode
-	}()
-
-	rw.w.WriteHeader(finalStatusCode)
-	rw.w.Write(rw.b)
 }
 
 // FormFile.

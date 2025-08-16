@@ -178,12 +178,15 @@ func TestResponse(t *testing.T) {
 			name:       "SendJson",
 			getContext: defaultGetCtx,
 			write: func(ctx Context) {
-				ctx.SendJson(&resData)
+				ctx.Render(http.StatusOK, &JsonResponse{
+					Data: &resData,
+				})
+
 			},
 			expectedStatusCode: http.StatusOK,
 			expectedBody:       string(marshaled),
 			expectedHeader: http.Header{
-				"Content-Type": []string{JsonContentTypeUTF8},
+				"Content-Type": []string{"application/json"},
 			},
 		},
 	}
