@@ -24,16 +24,20 @@ type route struct {
 	middlewares map[MiddlewareType]Middlewares
 }
 
+type ExecuteChainer interface {
+	ExecuteChain(ctx Context, lastIndex uint8)
+}
+
 type Route interface {
 	Handler
-	ExecuteChain(ctx Context, lastIndex uint8)
+	ExecuteChainer
 	RegisterMiddlewares(mws ...Middleware) Route
 	GetUrl() string
 }
 
 var _ Route = (*route)(nil)
 
-func newRoute(url string, fn HandlerFunc, r *router) *route {
+func newRoute(url string, fn HandlerFunc, r *router) Route {
 	return &route{
 		fullUrl:     url,
 		handler:     fn,
@@ -41,7 +45,7 @@ func newRoute(url string, fn HandlerFunc, r *router) *route {
 	}
 }
 
-func (route *route) registerMiddleware(m Middleware) *route {
+func (route *route) registerMiddleware(m Middleware) Route {
 	if route == nil {
 		return nil
 	}

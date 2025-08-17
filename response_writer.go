@@ -9,7 +9,7 @@ import (
 )
 
 type Response interface {
-	Encode(w io.Writer) error
+	Encode(w io.Writer) (int, error)
 	ContentType() string
 }
 
@@ -17,13 +17,12 @@ type DefaultResponse struct {
 	Data any
 }
 
-func (dr *DefaultResponse) Encode(w io.Writer) error {
+func (dr *DefaultResponse) Encode(w io.Writer) (int, error) {
 	b, ok := dr.Data.([]byte)
 	if !ok {
-		return errors.New("cant assert to []byte")
+		return 0, errors.New("cant assert to []byte")
 	}
-	_, err := w.Write(b)
-	return err
+	return w.Write(b)
 }
 
 func (dr *DefaultResponse) ContentType() string {
@@ -34,8 +33,23 @@ type JsonResponse struct {
 	Data any
 }
 
-func (js *JsonResponse) Encode(w io.Writer) error {
-	return json.NewEncoder(w).Encode(js.Data)
+type countWriter struct {
+	w            io.Writer
+	writtenBytes int
+}
+
+func (cw *countWriter) Write(p []byte) (int, error) {
+	n, err := cw.w.Write(p)
+	cw.writtenBytes = n
+	return n, err
+}
+
+func (js *JsonResponse) Encode(w io.Writer) (int, error) {
+	cw := &countWriter{w: w}
+	if err := json.NewEncoder(cw).Encode(js.Data); err != nil {
+		return 0, err
+	}
+	return cw.writtenBytes, nil
 }
 
 func (js *JsonResponse) ContentType() string {
@@ -51,6 +65,7 @@ type responseWriter struct {
 	defaultStatusCode int
 	statusCode        int
 	buff              *bytes.Buffer
+	writtenBytes      int
 
 	w http.ResponseWriter
 }
@@ -59,15 +74,20 @@ func (rw *responseWriter) Empty() {
 	rw.buff.Reset()
 	rw.statusCode = 0
 	rw.w = nil
+	rw.writtenBytes = 0
 }
 
 func (rw *responseWriter) write(b []byte) (int, error) {
-	return rw.buff.Write(b)
+	n, err := rw.buff.Write(b)
+	rw.writtenBytes += n
+	return n, err
 }
 
-func (rw *responseWriter) render(r Response) error {
+func (rw *responseWriter) render(r Response) (int, error) {
 	rw.addHeader(contentTypeHeaderKey, r.ContentType())
-	return r.Encode(rw.buff)
+	n, err := r.Encode(rw.buff)
+	rw.writtenBytes += n
+	return n, err
 }
 
 func (rw *responseWriter) setStatus(statusCode int) {
@@ -82,7 +102,8 @@ func (rw *responseWriter) copy(r io.Reader) error {
 	if rw == nil {
 		return errors.New("response writer is <nil>")
 	}
-	_, err := io.Copy(rw.buff, r)
+	n, err := io.Copy(rw.buff, r)
+	rw.writtenBytes += int(n)
 	return err
 }
 

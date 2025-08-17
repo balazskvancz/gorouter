@@ -106,7 +106,7 @@ type router struct {
 
 	// Custom handler for HTTP 404. Everytime a specific
 	// route is not found or a service returned 404 it gets called.
-	// By default, there a default notFoundHandler, which sends 404 in header.
+	// If not provided, there is a default notFoundHandler, which sends 404 status code.
 	notFoundHandler HandlerFunc
 
 	// Custom handler for HTTP OPTIONS.
@@ -370,10 +370,16 @@ func (r *router) Serve(ctx Context) {
 		}
 	}
 
+	var route ExecuteChainer = nil
+
 	route, params, err := r.endpointTree.find(method, ctx.GetCleanedUrl())
 	if err != nil {
 		fmt.Println(err)
 		return // TODO: what to do with it?
+	}
+
+	if route == nil {
+		route = r.getNotFoundHandler()
 	}
 
 	ctx.BindValue(routeParamsKey, params)
@@ -400,7 +406,10 @@ func (r *router) Serve(ctx Context) {
 
 	executor(preRunners)
 
-	if needToExecuteHandler {
+	// At this point the route should be a
+	// non-nil value, however a last nil check
+	// must be carried out.
+	if needToExecuteHandler && route != nil {
 		route.ExecuteChain(ctx, lastIndex)
 	}
 
@@ -471,6 +480,14 @@ func (router *router) filterMatchingMiddlewares(ctx Context) ([]Handler, []Handl
 	return preRunners, postRunners
 }
 
+func (router *router) getNotFoundHandler() ExecuteChainer {
+	if router.notFoundHandler != nil {
+		return &generalChainer{handler: router.notFoundHandler}
+	}
+
+	return &generalChainer{handler: defaultNotFoundHandler}
+}
+
 func getContextIdChan() contextIdChan {
 	ch := make(chan uint64)
 	go func() {
@@ -500,4 +517,14 @@ func defaultNotFoundHandler(ctx Context) {
 
 func defaultEmptyTreeHandler(ctx Context) {
 	ctx.Status(http.StatusMethodNotAllowed)
+}
+
+type generalChainer struct {
+	handler HandlerFunc
+}
+
+func (gc *generalChainer) ExecuteChain(ctx Context, _ uint8) {
+	gc.handler(ctx)
+
+	ctx.Next()
 }

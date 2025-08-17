@@ -63,6 +63,15 @@ type context struct {
 	index uint8
 }
 
+type ContextInfo struct {
+	Id           uint64
+	WrittenBytes int64
+	StartTime    time.Time
+	Url          string
+	StatusCode   int
+	Method       string
+}
+
 type Context interface {
 	// ---- Methods about the Context itself.
 	Reset(http.ResponseWriter, *http.Request)
@@ -71,6 +80,7 @@ type Context interface {
 	GetCurrentIndex() uint8
 	GetStartTime() time.Time
 	Next()
+	GetInfo() ContextInfo
 
 	// ---- Request
 	GetRequest() *http.Request
@@ -163,29 +173,40 @@ func (ctx *context) Reset(w http.ResponseWriter, r *http.Request) {
 
 // Empty makes the http.Request and http.ResponseWrite <nil>.
 // Should be called before putting the Context back to the pool.
-func (c *context) Empty() {
-	c.discard()
-
-	c.request = nil
-	c.writer.Empty()
-	c.index = 1
+func (ctx *context) Empty() {
+	ctx.discard()
+	ctx.request = nil
+	ctx.writer.Empty()
+	ctx.index = 1
 }
 
 // GetContextId returns the id of the context entity.
-func (c *context) GetContextId() uint64 {
-	return c.contextId
+func (ctx *context) GetContextId() uint64 {
+	return ctx.contextId
 }
 
 // GetCurrentIndex returns the current index,
 // which translates directly to how many times
 // the Next() function was called to that point.
-func (c *context) GetCurrentIndex() uint8 {
-	return c.index
+func (ctx *context) GetCurrentIndex() uint8 {
+	return ctx.index
 }
 
-// GetStartTime
-func (c *context) GetStartTime() time.Time {
-	return time.Now()
+// GetStartTime returns the time when the execution of the current
+// context has started.
+func (ctx *context) GetStartTime() time.Time {
+	return ctx.startTime
+}
+
+func (ctx *context) GetInfo() ContextInfo {
+	return ContextInfo{
+		Id:           ctx.contextId,
+		WrittenBytes: int64(ctx.writer.writtenBytes),
+		StartTime:    ctx.startTime,
+		Url:          ctx.GetUrl(),
+		StatusCode:   ctx.writer.statusCode,
+		Method:       ctx.request.Method,
+	}
 }
 
 // GetRequest returns the attached http.Request pointer.
