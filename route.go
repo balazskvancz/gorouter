@@ -45,45 +45,45 @@ func newRoute(url string, fn HandlerFunc, r *router) Route {
 	}
 }
 
-func (route *route) registerMiddleware(m Middleware) Route {
-	if route == nil {
+func (r *route) registerMiddleware(m Middleware) Route {
+	if r == nil {
 		return nil
 	}
 
 	t := m.Type()
-	route.middlewares[t] = append(route.middlewares[t], m)
+	r.middlewares[t] = append(r.middlewares[t], m)
 
-	return route
+	return r
 }
 
 // RegisterMiddlewares registers all the given middlewares one-by-one,
 // then returns the route pointer.
-func (route *route) RegisterMiddlewares(mws ...Middleware) Route {
-	if route == nil {
+func (r *route) RegisterMiddlewares(mws ...Middleware) Route {
+	if r == nil {
 		return nil
 	}
 
 	for _, m := range mws {
-		route.registerMiddleware(m)
+		r.registerMiddleware(m)
 	}
 
-	return route
+	return r
 }
 
-func (route *route) GetUrl() string {
-	if route == nil {
+func (r *route) GetUrl() string {
+	if r == nil {
 		return ""
 	}
-	return route.fullUrl
+	return r.fullUrl
 }
 
-func (route *route) ExecuteChain(ctx Context, lastIndex uint8) {
+func (r *route) ExecuteChain(ctx Context, lastIndex uint8) {
 	var (
 		needToExecuteHandler = true
 		last                 = lastIndex
 	)
 
-	for _, e := range route.middlewares[MiddlewarePreRunner] {
+	for _, e := range r.middlewares[MiddlewarePreRunner] {
 		e.Handle(ctx)
 
 		currentIndex := ctx.GetCurrentIndex()
@@ -97,15 +97,15 @@ func (route *route) ExecuteChain(ctx Context, lastIndex uint8) {
 	}
 
 	if needToExecuteHandler {
-		route.Handle(ctx)
+		r.Handle(ctx)
 	}
 
-	for _, e := range route.middlewares[MiddlewarePostRunner] {
+	for _, e := range r.middlewares[MiddlewarePostRunner] {
 		e.Handle(ctx)
 	}
 }
 
-func (route *route) Handle(ctx Context) {
-	route.handler(ctx)
+func (r *route) Handle(ctx Context) {
+	r.handler(ctx)
 	ctx.Next()
 }

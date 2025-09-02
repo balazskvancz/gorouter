@@ -29,8 +29,9 @@ const (
 
 	bindedValueKey bindValueKey = "bindedValues"
 
-	routeParamsKey ContextKey = "__routeParams__"
-	queryParamsKey ContextKey = "__queryParams__"
+	routeParamsKey   ContextKey = "__routeParams__"
+	queryParamsKey   ContextKey = "__queryParams__"
+	reqisteredUrlKey ContextKey = "__registeredUrl__"
 )
 
 var (
@@ -198,6 +199,7 @@ func (ctx *context) GetStartTime() time.Time {
 	return ctx.startTime
 }
 
+// GetInfo returns minimal information about the given context.
 func (ctx *context) GetInfo() ContextInfo {
 	return ContextInfo{
 		Id:           ctx.contextId,
@@ -265,16 +267,19 @@ func (ctx *context) GetCleanedUrl() string {
 // GetRegisteredUrl returns the exact url,
 // with which the current endpoint was registerd.
 func (ctx *context) GetRegisteredUrl() string {
-	return "TODO"
+	if url, ok := ctx.GetBindedValue(reqisteredUrlKey).(string); ok {
+		return url
+	}
+	return ""
 }
 
 // GetQueryParams returns the query params of the url.
 func (ctx *context) GetQueryParams() url.Values {
-	query, ok := ctx.ctx.Value(queryParamsKey).(url.Values)
+	query, ok := ctx.GetBindedValue(queryParamsKey).(url.Values)
 	if !ok {
 		query = ctx.request.URL.Query()
 
-		ctx.ctx = ctxpkg.WithValue(ctx.ctx, queryParamsKey, query)
+		ctx.BindValue(queryParamsKey, query)
 	}
 
 	return query

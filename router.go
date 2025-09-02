@@ -372,17 +372,20 @@ func (r *router) Serve(ctx Context) {
 
 	var route ExecuteChainer = nil
 
-	route, params, err := r.endpointTree.find(method, ctx.GetCleanedUrl())
+	foundRoute, params, err := r.endpointTree.find(method, ctx.GetCleanedUrl())
 	if err != nil {
 		fmt.Println(err)
 		return // TODO: what to do with it?
 	}
 
-	if route == nil {
+	if foundRoute == nil {
 		route = r.getNotFoundHandler()
+	} else {
+		route = foundRoute
 	}
 
 	ctx.BindValue(routeParamsKey, params)
+	ctx.BindValue(reqisteredUrlKey, foundRoute.GetUrl())
 
 	var (
 		preRunners, postRunners       = r.filterMatchingMiddlewares(ctx)
