@@ -388,14 +388,16 @@ func (r *router) Serve(ctx Context) {
 	ctx.BindValue(reqisteredUrlKey, foundRoute.GetUrl())
 
 	var (
-		preRunners, postRunners       = r.filterMatchingMiddlewares(ctx)
-		lastIndex               uint8 = 0
-		needToExecuteHandler          = true
+		lastIndex            uint8 = 0
+		needToExecuteHandler       = true
 	)
 
-	var executor = func(arr []Handler) {
-		for _, e := range arr {
-			e.Handle(ctx)
+	var exucuteMiddlewareChain = func(mwType MiddlewareType) {
+		for _, mw := range r.middlewares[mwType] {
+			if !mw.DoesMatch(ctx) {
+				continue
+			}
+			mw.Handle(ctx)
 
 			currentIndex := ctx.GetCurrentIndex()
 			if currentIndex == lastIndex {
@@ -407,7 +409,7 @@ func (r *router) Serve(ctx Context) {
 		}
 	}
 
-	executor(preRunners)
+	exucuteMiddlewareChain(MiddlewarePreRunner)
 
 	// At this point the route should be a
 	// non-nil value, however a last nil check
@@ -416,7 +418,7 @@ func (r *router) Serve(ctx Context) {
 		route.ExecuteChain(ctx, lastIndex)
 	}
 
-	executor(postRunners)
+	exucuteMiddlewareChain(MiddlewarePostRunner)
 }
 
 // ServeHTTP is the main entrypoint for every incoming HTTP requests.
@@ -460,27 +462,6 @@ func (router *router) appendToMiddlewares(mType MiddlewareType, middlewares ...M
 	}
 
 	router.middlewares[mType] = append(router.middlewares[mType], middlewares...)
-}
-
-func (router *router) filterMatchingMiddlewares(ctx Context) ([]Handler, []Handler) {
-	var (
-		preRunners  = make([]Handler, 0)
-		postRunners = make([]Handler, 0)
-	)
-
-	for _, e := range router.middlewares[MiddlewarePreRunner] {
-		if e.DoesMatch(ctx) {
-			preRunners = append(preRunners, e)
-		}
-	}
-
-	for _, e := range router.middlewares[MiddlewarePostRunner] {
-		if e.DoesMatch(ctx) {
-			postRunners = append(postRunners, e)
-		}
-	}
-
-	return preRunners, postRunners
 }
 
 func (router *router) getNotFoundHandler() ExecuteChainer {

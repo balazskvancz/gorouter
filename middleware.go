@@ -7,6 +7,8 @@ const (
 	MiddlewarePostRunner MiddlewareType = "postRunner"
 )
 
+var validMiddlewareTypes = []MiddlewareType{MiddlewarePreRunner, MiddlewarePostRunner}
+
 type MiddlewareMatcherFunc func(Context) bool
 
 type middleware struct {
@@ -62,8 +64,16 @@ func MiddlewareWithAlwaysAllowed(isAlwaysAllowed bool) MiddlewareOptionFunc {
 // MiddlewareWithType configures the type of the new middleware.
 func MiddlewareWithType(mwType MiddlewareType) MiddlewareOptionFunc {
 	return func(m *middleware) {
-		// TODO: validation!
-		m.mwType = mwType
+		var valid bool
+		for _, e := range validMiddlewareTypes {
+			if e == mwType {
+				valid = true
+				break
+			}
+		}
+		if valid {
+			m.mwType = mwType
+		}
 	}
 }
 

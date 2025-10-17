@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"weak"
 )
 
 const (
@@ -35,7 +36,8 @@ const (
 )
 
 var (
-	ErrCtNotMultipart = errors.New("the content-type is not multipart/form-data")
+	ErrCtNotMultipart             = errors.New("the content-type is not multipart/form-data")
+	ErrNoUnderlyingRequestPointer = errors.New("no underlying request pointer")
 )
 
 type (
@@ -52,7 +54,7 @@ type (
 type context struct {
 	ctx     ctxpkg.Context
 	writer  *responseWriter
-	request *http.Request
+	request weak.Pointer[http.Request]
 
 	contextId     uint64
 	contextIdChan contextIdChan
@@ -163,7 +165,7 @@ func newResponseWriter(statusCode int) *responseWriter {
 func (ctx *context) Reset(w http.ResponseWriter, r *http.Request) {
 	ctx.ctx = ctxpkg.Background()
 	ctx.writer.w = w
-	ctx.request = r
+	ctx.request = weak.Make(r)
 	ctx.startTime = time.Now()
 
 	// We set the next id from the channel.
@@ -176,7 +178,6 @@ func (ctx *context) Reset(w http.ResponseWriter, r *http.Request) {
 // Should be called before putting the Context back to the pool.
 func (ctx *context) Empty() {
 	ctx.discard()
-	ctx.request = nil
 	ctx.writer.Empty()
 	ctx.index = 1
 }
@@ -201,19 +202,24 @@ func (ctx *context) GetStartTime() time.Time {
 
 // GetInfo returns minimal information about the given context.
 func (ctx *context) GetInfo() ContextInfo {
+	var method string
+	if r := ctx.request.Value(); r != nil {
+		method = r.Method
+	}
+
 	return ContextInfo{
 		Id:           ctx.contextId,
 		WrittenBytes: int64(ctx.writer.writtenBytes),
 		StartTime:    ctx.startTime,
 		Url:          ctx.GetUrl(),
 		StatusCode:   ctx.writer.statusCode,
-		Method:       ctx.request.Method,
+		Method:       method,
 	}
 }
 
 // GetRequest returns the attached http.Request pointer.
 func (ctx *context) GetRequest() *http.Request {
-	return ctx.request
+	return ctx.request.Value()
 }
 
 // GetRequestMethod returns the method of incoming request.
@@ -221,10 +227,11 @@ func (ctx *context) GetRequestMethod() string {
 	if ctx == nil {
 		return ""
 	}
-	if ctx.request == nil {
+	r := ctx.GetRequest()
+	if r == nil {
 		return ""
 	}
-	return ctx.request.Method
+	return r.Method
 }
 
 // BindValue binds a given value – with any – to the ongoing request with certain key.
@@ -252,10 +259,11 @@ func (ctx *context) GetBindedValue(key ContextKey) any {
 
 // GetlUrl returns the full URL with all queryParams included.
 func (ctx *context) GetUrl() string {
-	if ctx.request == nil {
+	r := ctx.GetRequest()
+	if r == nil {
 		return ""
 	}
-	return ctx.request.RequestURI
+	return r.RequestURI
 }
 
 // GetCleanedUrl returns the url
@@ -277,7 +285,11 @@ func (ctx *context) GetRegisteredUrl() string {
 func (ctx *context) GetQueryParams() url.Values {
 	query, ok := ctx.GetBindedValue(queryParamsKey).(url.Values)
 	if !ok {
-		query = ctx.request.URL.Query()
+		r := ctx.GetRequest()
+		if r == nil {
+			return make(url.Values)
+		}
+		query = r.URL.Query()
 
 		ctx.BindValue(queryParamsKey, query)
 	}
@@ -294,12 +306,18 @@ func (ctx *context) GetQueryParam(key string) string {
 
 // GetBody returns the body of the incoming request.
 func (ctx *context) GetBody() io.ReadCloser {
-	return ctx.request.Body
+	if r := ctx.GetRequest(); r != nil {
+		return r.Body
+	}
+	return nil
 }
 
 // GetRequestHeaders returns all the headers from the request.
 func (ctx *context) GetRequestHeaders() http.Header {
-	return ctx.request.Header
+	if r := ctx.GetRequest(); r != nil {
+		return r.Header
+	}
+	return nil
 }
 
 // GetRequestHeader return one specific headers value, with given key.
@@ -399,7 +417,10 @@ func (ctx *context) ParseForm() error {
 		return ErrCtNotMultipart
 	}
 	ctx.isFormParsed = true
-	return ctx.request.ParseMultipartForm(ctx.maxBodySize)
+	if r := ctx.GetRequest(); r != nil {
+		return r.ParseMultipartForm(ctx.maxBodySize)
+	}
+	return errors.New("no underlying request pointer")
 }
 
 // GetFormValue returns the value in the form associated with
@@ -410,7 +431,10 @@ func (ctx *context) GetFormValue(key string) (string, error) {
 			return "", err
 		}
 	}
-	return ctx.request.FormValue(key), nil
+	if r := ctx.GetRequest(); r != nil {
+		return r.FormValue(key), nil
+	}
+	return "", ErrNoUnderlyingRequestPointer
 }
 
 // GetFormFile returns the File and and error associated with
@@ -421,7 +445,11 @@ func (ctx *context) GetFormFile(key string) (File, error) {
 			return nil, err
 		}
 	}
-	file, header, err := ctx.request.FormFile(key)
+	r := ctx.GetRequest()
+	if r == nil {
+		return nil, ErrNoUnderlyingRequestPointer
+	}
+	file, header, err := r.FormFile(key)
 	if err != nil {
 		return nil, err
 	}
