@@ -382,10 +382,11 @@ func (r *router) Serve(ctx Context) {
 		route = r.getNotFoundHandler()
 	} else {
 		route = foundRoute
+
+		ctx.BindValue(reqisteredUrlKey, foundRoute.GetUrl())
 	}
 
 	ctx.BindValue(routeParamsKey, params)
-	ctx.BindValue(reqisteredUrlKey, foundRoute.GetUrl())
 
 	var (
 		lastIndex            uint8 = 0
