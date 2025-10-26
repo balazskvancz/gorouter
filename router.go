@@ -50,7 +50,6 @@ type (
 	PanicHandlerFunc func(Context, interface{})
 
 	routerOptionFunc func(*router)
-	RouterOptionFunc func(Router)
 )
 
 type Handler interface {

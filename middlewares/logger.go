@@ -1,7 +1,6 @@
 package middlewares
 
 import (
-	"bufio"
 	"io"
 	"log/slog"
 	"os"
@@ -11,8 +10,7 @@ import (
 )
 
 const (
-	microNanoTreshold      int64         = 10_000
-	defaultBufferFlushFreq time.Duration = 500 * time.Millisecond
+	microNanoTreshold int64 = 10_000
 )
 
 // Logger creates and returns a middleware which logs
@@ -59,40 +57,4 @@ func Logger(w ...io.Writer) gorouter.Middleware {
 		},
 		gorouter.MiddlewareWithType(gorouter.MiddlewarePostRunner),
 	)
-}
-
-type BufferedLoggerOptions struct {
-	FlushFrequency time.Duration
-	Writer         io.Writer
-}
-
-// BufferedLogger creates and returns a middleware on top of
-// the `Logger` middleware that provides buffered logging,
-// where a separate goroutine is launched and flushes the
-// the content of the buffered reader everytime the provided
-// duration passed.
-func BufferedLogger(opts *BufferedLoggerOptions) gorouter.Middleware {
-	var (
-		waitDuration           = defaultBufferFlushFreq
-		w            io.Writer = os.Stdout
-	)
-
-	if opts != nil {
-		if opts.FlushFrequency != 0 {
-			waitDuration = opts.FlushFrequency
-		}
-
-		if opts.Writer != nil {
-			w = opts.Writer
-		}
-	}
-
-	buff := bufio.NewWriter(w)
-	go func() {
-		for range time.Tick(waitDuration) {
-			buff.Flush()
-		}
-	}()
-
-	return Logger(buff)
 }
