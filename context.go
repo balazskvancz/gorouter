@@ -76,6 +76,8 @@ type ContextInfo struct {
 }
 
 type Context interface {
+	http.ResponseWriter
+
 	// ---- Methods about the Context itself.
 	Reset(http.ResponseWriter, *http.Request)
 	Empty()
@@ -124,6 +126,7 @@ type Context interface {
 }
 
 var _ Context = (*context)(nil)
+var _ http.ResponseWriter = (*context)(nil)
 
 type formFile struct {
 	file   multipart.File
@@ -522,6 +525,23 @@ func (ctx *context) Copy(r io.Reader) {
 // should be called in the handler chain.
 func (ctx *context) Next() {
 	ctx.index += 1
+}
+
+// Header returns the header map associated with the writer instance.
+func (ctx *context) Header() http.Header {
+	return ctx.writer.w.Header()
+}
+
+// Write writes the given byte data into the writer buffer.
+func (ctx *context) Write(b []byte) (int, error) {
+	return ctx.writer.render(&ByteResponse{
+		Data: b,
+	})
+}
+
+// WriteHeader sets the given status code for the response
+func (ctx *context) WriteHeader(statusCode int) {
+	ctx.Status(statusCode)
 }
 
 func (ctx *context) discard() {

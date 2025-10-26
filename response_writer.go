@@ -29,6 +29,18 @@ func (dr *DefaultResponse) ContentType() string {
 	return "text/plain"
 }
 
+type ByteResponse struct {
+	Data []byte
+}
+
+func (br *ByteResponse) Encode(w io.Writer) (int, error) {
+	return w.Write(br.Data)
+}
+
+func (br *ByteResponse) ContentType() string {
+	return ""
+}
+
 type JsonResponse struct {
 	Data any
 }
@@ -84,7 +96,9 @@ func (rw *responseWriter) write(b []byte) (int, error) {
 }
 
 func (rw *responseWriter) render(r Response) (int, error) {
-	rw.addHeader(contentTypeHeaderKey, r.ContentType())
+	if ct := r.ContentType(); ct != "" {
+		rw.addHeader(contentTypeHeaderKey, r.ContentType())
+	}
 	n, err := r.Encode(rw.buff)
 	rw.writtenBytes += n
 	return n, err
